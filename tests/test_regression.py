@@ -258,3 +258,47 @@ class TestAgentBenchRegression:
         fatal = [line for line in severe if "Uncaught" in line or "TypeError" in line or "ReferenceError" in line]
         assert not fatal, "Console-fatal on health view:\n" + "\n".join(fatal)
         ctx["health"] = True
+
+    def test_14_regression_runs(self, driver, base_url, ctx):
+        _require(ctx, "signed_in", "regression_suite", "regression_passed_case", "regression_failed_case")
+        driver.get(base_url + "/")
+        wait_outcome(driver, ctx["display_name"])
+        open_tab(driver, "Regression runs", "Regression runs")
+        wait_outcome(driver, ctx["regression_suite"])
+
+        def find_run(d):
+            matches = d.find_elements(
+                By.XPATH,
+                "//button[contains(@class,'list-item')]"
+                f"[.//span[normalize-space()='{ctx['regression_suite']}']]",
+            )
+            for element in matches:
+                try:
+                    if element.is_displayed():
+                        return element
+                except StaleElementReferenceException:
+                    return False
+            return False
+
+        run_button = wait(driver, 20).until(find_run)
+        scroll(driver, run_button)
+        run_button.click()
+        passed = wait(driver, 20).until(
+            lambda d: d.find_element(
+                By.XPATH,
+                "//li[contains(@class,'regression-case')]"
+                f"[contains(., '{ctx['regression_passed_case']}')]",
+            )
+        )
+        failed = wait(driver, 20).until(
+            lambda d: d.find_element(
+                By.XPATH,
+                "//li[contains(@class,'regression-case')]"
+                f"[contains(., '{ctx['regression_failed_case']}')]",
+            )
+        )
+        assert "passed" in passed.text.lower()
+        assert "failed" in failed.text.lower()
+        assert "passed" not in failed.text.lower()
+        assert_no_error(driver)
+        ctx["regression"] = True

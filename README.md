@@ -30,7 +30,7 @@ pip install -r requirements.txt
 pytest
 ```
 
-Every `pytest` run seeds [fixtures/mock-data.json](fixtures/mock-data.json) through the API before any case. The seed is idempotent: fixed emails and slugs are registered or reused, projects and benchmarks are created or updated, the published Java task is reused, and the public board's comments are reset to the fixture rows. A second run does not invent new users.
+Every `pytest` run seeds [fixtures/mock-data.json](fixtures/mock-data.json) through the API before any case. The seed is idempotent: fixed emails and slugs are registered or reused, projects and benchmarks are created or updated, the published Java task is reused, and the public board's comments are reset to the fixture rows. A second run does not invent new users. The same seed registers `selenium-viewer@example.com` as a VIEWER, keeps a draft benchmark with a visible suite and a hidden suite, publishes then unpublishes `selenium-edge-unpublished`, upserts one flake quarantine for `maven-junit.runner`, and reuses one platform regression run (`selenium-mock` at git SHA `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`).
 
 To seed without opening Chrome:
 
@@ -55,7 +55,7 @@ Headless Chrome is the default (`--headless=new`, `--no-sandbox`, `--disable-dev
 | `HEADLESS` | `1` | Set `0` to show Chrome |
 | `CHROME_BIN` | `/usr/local/bin/google-chrome` | Browser binary |
 
-No API keys, cloud credentials, or `.env` secrets are required. The signed-in user is `selenium-mock@example.com` from the fixture (mock password `password123`). Tests do not generate a unique email per run.
+No API keys, cloud credentials, or `.env` secrets are required. The signed-in owner is `selenium-mock@example.com` and the VIEWER is `selenium-viewer@example.com` (both use the mock password `password123`). Tests do not generate a unique email per run.
 
 ## What is covered
 
@@ -69,6 +69,19 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 6. **Export CSV** on the org leaderboard returns HTTP 200 or a downloaded `.csv`.
 7. The seeded public board link opens. The fixture title, comment, and up-vote tally are visible.
 8. The Ops health panel loads.
+9. **Regression runs** opens after the fixture run exists. The mock-seeded case rows show `mock-seed::test_passes` as passed and `mock-seed::test_fails` as failed.
+
+`tests/test_regression_edges.py` then runs, still in the same browser session:
+
+10. Blank names are blocked or rejected (`name: must not be blank`). Duplicate org slug, project, benchmark, agent, and version show the conflict text. An invalid version string shows the version pattern error.
+11. The owner opens the draft task and sees both suites by framework. The hidden fixture text is not rendered.
+12. Publishing a draft version that has no tasks shows `Cannot publish a version with no tasks`.
+13. The newest evaluation's score panel shows an incomplete withheld total or a numeric total, the F2P/P2P/P2F/F2F line, and the seeded flake case marked quarantined. Creating a quarantine with no scope, a past `expiresAt`, an oversized reason, or the same case key again returns the API validation or conflict text.
+14. Cancel on a non-terminal evaluation reaches `CANCELLED`, and the button is gone afterward.
+15. Leaderboard JSON export returns HTTP 200, including the empty draft version. Compare with the agent selected and no scored rows shows the empty comparison state.
+16. On the public board, an empty comment cannot be posted, a 2001-character comment is rejected, a vote value other than 1 or -1 is rejected, and the seeded tally does not change. The unpublished slug shows `Public leaderboard not found` and no community form.
+17. Logging out while a project name is typed discards that name. Empty login is blocked by the form, a wrong password shows `Invalid credentials`, registering the seeded email shows `Email already registered`, and a short password shows the size error.
+18. The VIEWER sees `Your role: VIEWER`, no create/enqueue/hidden-suite/unpublish controls, hidden content as `present (restricted)` without the fixture text, a read-only public board, a working CSV export, and `Insufficient role for this operation` when creating a quarantine.
 
 Failure screenshots and page HTML are written under `reports/` (gitignored).
 
@@ -77,7 +90,7 @@ Failure screenshots and page HTML are written under `reports/` (gitignored).
 - Oracle Cloud Always Free, live AWS, S3/MinIO, and Object Lock / Compliance retention.
 - Firecracker, gVisor, and any claim that Docker isolation ran. The default worker image does not mount the Docker socket; the worker falls back to a local process. A `FAILED` evaluation whose UI still reaches a terminal state is a passed UI flow, not a skipped test. `COMPLETED` needs a Maven-capable runner (Docker socket on the worker, or Maven on that machine).
 - Python (pytest) and Node (Jest) benchmark paths, and the optional ruff/eslint images. Only the Java/JUnit task path is created.
-- OIDC, SAML/SSO, paid model providers, hidden-suite confidentiality checks, embed signing, and compare/cost charts beyond the pages above.
+- OIDC, SAML login, paid model providers, agent-facing hidden-suite APIs, embed signing, and cost charts. The viewer task page's hidden-suite redaction is covered. SAML admin screens are only checked for the VIEWER message.
 
 ## Adding a test for a new feature
 

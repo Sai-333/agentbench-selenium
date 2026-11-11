@@ -4,6 +4,10 @@ Every pytest session runs this before cases. ``python tests/seed.py`` runs it
 alone. Fixed emails and slugs are registered or reused; child rows are created
 or updated. Public-board comments are reset to the fixture set. Votes are
 upserted by the fixture fingerprint (the API has no vote-delete).
+
+Optional fixture rows are also upserted when present: a VIEWER member, a
+draft benchmark with visible and hidden suites, a published version whose
+public board is left unpublished, and one active flake quarantine.
 """
 
 from __future__ import annotations
@@ -405,6 +409,273 @@ def _upsert_votes(base: str, slug: str, votes: list[dict]) -> dict:
     return summary
 
 
+def _user_by_role(fixture: dict, role: str) -> dict:
+    matches = [user for user in fixture["users"] if user.get("role") == role]
+    if len(matches) != 1:
+        raise RuntimeError(f"fixtures/mock-data.json needs exactly one user with role {role}")
+    return matches[0]
+
+
+def _ensure_account(base: str, user: dict) -> str:
+    token = _login_or_register(base, user)
+    _, me = _api(base, "GET", "/api/v1/me", token=token)
+    if me.get("email") != user["email"]:
+        raise RuntimeError(f"Logged in as {me.get('email')}, expected {user['email']}")
+    if me.get("displayName") != user["displayName"]:
+        raise RuntimeError(
+            f"User {user['email']} display name is {me.get('displayName')!r}, "
+            f"fixture expects {user['displayName']!r}. Registration display names cannot be changed."
+        )
+    return token
+
+
+def _ensure_member(base: str, token: str, org_id: str, email: str, role: str) -> str:
+    try:
+        _, created = _api(
+            base,
+            "POST",
+            f"/api/v1/orgs/{org_id}/members",
+            {"email": email, "role": role},
+            token=token,
+        )
+        return created["userId"]
+    except ApiError as exc:
+        if exc.status != 409:
+            raise
+    _, members = _api(base, "GET", f"/api/v1/orgs/{org_id}/members", token=token)
+    match = next((item for item in members if item.get("email") == email), None)
+    if match is None:
+        raise RuntimeError(f"{email} is not a member of the seeded organization")
+    if match.get("role") != role:
+        _, match = _api(
+            base,
+            "PUT",
+            f"/api/v1/orgs/{org_id}/members/{match['userId']}",
+            {"role": role},
+            token=token,
+        )
+    if match.get("role") != role:
+        raise RuntimeError(f"{email} role is {match.get('role')!r}, fixture expects {role!r}")
+    return match["userId"]
+
+
+def _upsert_suite(base: str, token: str, org_id: str, task_id: str, visibility: str, suite: dict) -> dict:
+    _, suite_row = _api(
+        base,
+        "PUT",
+        f"/api/v1/orgs/{org_id}/tasks/{task_id}/suites/{visibility}",
+        {
+            "framework": suite["framework"],
+            "entryCommand": suite.get("entryCommand") or "",
+            "fixtureContent": suite.get("fixtureContent") or "",
+            "caseCount": suite.get("caseCount") or 1,
+        },
+        token=token,
+    )
+    return suite_row
+
+
+def _task_body(task: dict) -> dict:
+    return {
+        "title": task["title"],
+        "prompt": task["prompt"],
+        "acceptanceCriteria": task.get("acceptanceCriteria") or "",
+        "category": task.get("category") or "",
+        "difficulty": task.get("difficulty") or "EASY",
+        "languageTags": task.get("languageTags") or ["java"],
+        "timeoutSec": task.get("timeoutSec") or 90,
+    }
+
+
+def _ensure_edge_benchmark(base: str, token: str, org_id: str, project_id: str, edge: dict) -> dict:
+    benchmark = {
+        "name": edge["benchmarkName"],
+        "description": edge.get("benchmarkDescription") or "",
+    }
+    benchmark_id = _ensure_benchmark(base, token, org_id, benchmark, project_id)
+    draft_version_id, draft_task_id = _ensure_draft_with_suites(
+        base, token, org_id, benchmark_id, edge
+    )
+    published_spec = {
+        "version": edge["publishedVersion"],
+        "changelog": edge.get("publishedChangelog") or "",
+        "task": edge["publishedTask"],
+        "visibleSuite": edge["visibleSuite"],
+    }
+    published_version_id, _published_task_id = _ensure_published_version(
+        base, token, org_id, benchmark_id, published_spec
+    )
+    _ensure_unpublished(base, token, org_id, published_version_id, edge["unpublishedBoard"])
+    return {
+        "benchmark_id": benchmark_id,
+        "draft_version_id": draft_version_id,
+        "draft_task_id": draft_task_id,
+        "published_version_id": published_version_id,
+    }
+
+
+def _ensure_draft_with_suites(base: str, token: str, org_id: str, benchmark_id: str, edge: dict) -> tuple[str, str]:
+    task = edge["draftTask"]
+    _, versions = _api(
+        base,
+        "GET",
+        f"/api/v1/orgs/{org_id}/benchmarks/{benchmark_id}/versions",
+        token=token,
+    )
+    version = next((item for item in versions if item.get("version") == edge["draftVersion"]), None)
+    if version is None:
+        _, version = _api(
+            base,
+            "POST",
+            f"/api/v1/orgs/{org_id}/benchmarks/{benchmark_id}/versions",
+            {"version": edge["draftVersion"], "changelog": edge.get("draftChangelog") or ""},
+            token=token,
+        )
+    if version.get("status") != "DRAFT":
+        raise RuntimeError(
+            f"Edge version {edge['draftVersion']} is {version.get('status')}, not DRAFT. "
+            "Published versions are immutable, so the hidden suite cannot be refreshed."
+        )
+    version_id = version["id"]
+    _, tasks = _api(
+        base,
+        "GET",
+        f"/api/v1/orgs/{org_id}/benchmark-versions/{version_id}/tasks",
+        token=token,
+    )
+    existing = next((item for item in tasks if item.get("slug") == task["slug"]), None)
+    body = _task_body(task)
+    if existing is None:
+        _, existing = _api(
+            base,
+            "POST",
+            f"/api/v1/orgs/{org_id}/benchmark-versions/{version_id}/tasks",
+            {"slug": task["slug"], **body},
+            token=token,
+        )
+    elif existing.get("title") != task["title"] or existing.get("prompt") != task["prompt"]:
+        _, existing = _api(
+            base,
+            "PUT",
+            f"/api/v1/orgs/{org_id}/tasks/{existing['id']}",
+            body,
+            token=token,
+        )
+    visible = _upsert_suite(base, token, org_id, existing["id"], "visible", edge["visibleSuite"])
+    hidden = _upsert_suite(base, token, org_id, existing["id"], "hidden", edge["hiddenSuite"])
+    if visible.get("framework") != edge["visibleSuite"]["framework"]:
+        raise RuntimeError(
+            f"Draft visible suite is {visible.get('framework')!r}, "
+            f"expected {edge['visibleSuite']['framework']!r}"
+        )
+    if hidden.get("contentRestricted"):
+        raise RuntimeError("Owner seed received a restricted hidden suite")
+    fixture_body = (edge["hiddenSuite"].get("fixtureContent") or "").strip()
+    if fixture_body and fixture_body not in (hidden.get("fixtureContent") or ""):
+        raise RuntimeError("Hidden suite fixture was not stored")
+    if hidden.get("framework") != edge["hiddenSuite"]["framework"]:
+        raise RuntimeError(
+            f"Draft hidden suite is {hidden.get('framework')!r}, "
+            f"expected {edge['hiddenSuite']['framework']!r}"
+        )
+    return version_id, existing["id"]
+
+
+def _ensure_unpublished(base: str, token: str, org_id: str, version_id: str, board: dict) -> None:
+    _, published = _api(
+        base,
+        "POST",
+        f"/api/v1/orgs/{org_id}/benchmark-versions/{version_id}/leaderboard/publish",
+        {"publicSlug": board["slug"], "title": board["title"]},
+        token=token,
+    )
+    if not published.get("published") or published.get("publicSlug") != board["slug"]:
+        raise RuntimeError(f"Edge board did not publish at {board['slug']}: {published}")
+    _, unpublished = _api(
+        base,
+        "POST",
+        f"/api/v1/orgs/{org_id}/benchmark-versions/{version_id}/leaderboard/unpublish",
+        token=token,
+    )
+    if unpublished.get("published"):
+        raise RuntimeError(f"Edge board stayed published: {unpublished}")
+    if unpublished.get("publicSlug") != board["slug"]:
+        raise RuntimeError(
+            f"Unpublished board slug is {unpublished.get('publicSlug')!r}, expected {board['slug']!r}"
+        )
+    try:
+        _api(base, "GET", f"/api/v1/public/leaderboards/{board['slug']}")
+    except ApiError as exc:
+        if exc.status != 404:
+            raise
+    else:
+        raise RuntimeError(f"Unpublished board {board['slug']} is still readable")
+
+
+def _ensure_flake(base: str, token: str, org_id: str, flake: dict) -> str:
+    _, rows = _api(
+        base,
+        "GET",
+        f"/api/v1/orgs/{org_id}/flake-quarantines?includeInactive=true",
+        token=token,
+    )
+    case_key = flake["caseKey"]
+    active = next(
+        (
+            row
+            for row in rows
+            if row.get("active") and row.get("caseKey") == case_key and not row.get("suiteId")
+        ),
+        None,
+    )
+    if active is not None:
+        return active["id"]
+    _, created = _api(
+        base,
+        "POST",
+        f"/api/v1/orgs/{org_id}/flake-quarantines",
+        {"caseKey": case_key, "reason": flake.get("reason") or ""},
+        token=token,
+    )
+    if created.get("caseKey") != case_key or not created.get("active"):
+        raise RuntimeError(f"Flake quarantine was not created: {created}")
+    return created["id"]
+
+
+def _case_pairs(cases: list[dict]) -> list[tuple[str, str]]:
+    return [(item["name"], item["status"]) for item in cases]
+
+
+def _ensure_regression_run(base: str, token: str, run: dict) -> dict:
+    """Create the fixture run once. A later seed reuses the same git SHA and case rows."""
+    _, listing = _api(base, "GET", "/api/v1/regression-runs?limit=100", token=token)
+    if not isinstance(listing, list):
+        raise RuntimeError(f"Regression run list was {type(listing).__name__}, expected a list")
+    wanted = _case_pairs(run.get("cases") or [])
+    for item in listing:
+        if item.get("suiteName") != run["suiteName"] or item.get("gitSha") != run["gitSha"]:
+            continue
+        _, detail = _api(base, "GET", f"/api/v1/regression-runs/{item['id']}", token=token)
+        actual = _case_pairs(detail.get("cases") or [])
+        if actual == wanted:
+            return detail
+        break
+    _, created = _api(
+        base,
+        "POST",
+        "/api/v1/regression-runs",
+        {
+            "gitRepo": run["gitRepo"],
+            "gitBranch": run["gitBranch"],
+            "gitSha": run["gitSha"],
+            "suiteName": run["suiteName"],
+            "cases": run["cases"],
+        },
+        token=token,
+    )
+    return created
+
+
 def seed_mock_data(api_url: str, fixture: dict | None = None) -> dict:
     """Upsert the committed fixture. Returns the identities the UI tests use."""
     data = fixture if fixture is not None else load_fixture()
@@ -429,15 +700,7 @@ def seed_mock_data(api_url: str, fixture: dict | None = None) -> dict:
     if board.get("benchmarkName") != benchmark["name"] or board.get("version") != benchmark["version"]:
         raise RuntimeError("public board must target the seeded benchmark version")
 
-    token = _login_or_register(base, user)
-    _, me = _api(base, "GET", "/api/v1/me", token=token)
-    if me.get("email") != user["email"]:
-        raise RuntimeError(f"Logged in as {me.get('email')}, expected {user['email']}")
-    if me.get("displayName") != user["displayName"]:
-        raise RuntimeError(
-            f"User {user['email']} display name is {me.get('displayName')!r}, "
-            f"fixture expects {user['displayName']!r}. Registration display names cannot be changed."
-        )
+    token = _ensure_account(base, user)
 
     org_id = _ensure_org(base, token, org)
     project_id = _ensure_project(base, token, org_id, project)
@@ -448,6 +711,21 @@ def seed_mock_data(api_url: str, fixture: dict | None = None) -> dict:
     _reset_comments(base, token, org_id, version_id, board["slug"], board.get("comments") or [])
     summary = _upsert_votes(base, board["slug"], board.get("votes") or [])
     comment = (board.get("comments") or [{}])[0]
+    regression = data.get("regressionRun")
+    regression_detail = _ensure_regression_run(base, token, regression) if regression else None
+    regression_cases = (regression or {}).get("cases") or []
+    passed_case = next((item["name"] for item in regression_cases if item.get("status") == "passed"), "")
+    failed_case = next((item["name"] for item in regression_cases if item.get("status") == "failed"), "")
+
+    edge = org.get("edge") or {}
+    viewer = _user_by_role(data, "viewer") if any(user.get("role") == "viewer" for user in data["users"]) else None
+    if viewer is None or not edge:
+        raise RuntimeError("fixtures/mock-data.json needs a viewer user and organizations[0].edge")
+    _ensure_account(base, viewer)
+    member = next(item for item in (org.get("members") or []) if item.get("email") == viewer["email"])
+    _ensure_member(base, token, org_id, viewer["email"], member["role"])
+    edge_ids = _ensure_edge_benchmark(base, token, org_id, project_id, edge)
+    flake_id = _ensure_flake(base, token, org_id, edge["flake"])
 
     return {
         "email": user["email"],
@@ -474,6 +752,30 @@ def seed_mock_data(api_url: str, fixture: dict | None = None) -> dict:
         "comment": comment.get("body", ""),
         "up_count": int(summary.get("upCount") or 0),
         "score": int(summary.get("score") or 0),
+        "regression_suite": (regression or {}).get("suiteName", ""),
+        "regression_passed_case": passed_case,
+        "regression_failed_case": failed_case,
+        "regression_run_id": (regression_detail or {}).get("id", ""),
+        "viewer_email": viewer["email"],
+        "viewer_password": viewer["password"],
+        "viewer_display_name": viewer["displayName"],
+        "viewer_role": member["role"],
+        "edge_benchmark_name": edge["benchmarkName"],
+        "draft_version": edge["draftVersion"],
+        "empty_version": edge["emptyVersion"],
+        "edge_published_version": edge["publishedVersion"],
+        "draft_task_title": edge["draftTask"]["title"],
+        "draft_task_slug": edge["draftTask"]["slug"],
+        "visible_framework": edge["visibleSuite"]["framework"],
+        "hidden_framework": edge["hiddenSuite"]["framework"],
+        "hidden_fixture": edge["hiddenSuite"].get("fixtureContent") or "",
+        "unpublished_slug": edge["unpublishedBoard"]["slug"],
+        "unpublished_title": edge["unpublishedBoard"]["title"],
+        "flake_case_key": edge["flake"]["caseKey"],
+        "flake_reason": edge["flake"].get("reason") or "",
+        "flake_id": flake_id,
+        "edge_benchmark_id": edge_ids["benchmark_id"],
+        "draft_version_id": edge_ids["draft_version_id"],
     }
 
 
@@ -499,6 +801,13 @@ def main() -> int:
                 "comment": ctx["comment"],
                 "upCount": ctx["up_count"],
                 "score": ctx["score"],
+                "viewer": ctx["viewer_email"],
+                "edgeBenchmark": ctx["edge_benchmark_name"],
+                "draftVersion": ctx["draft_version"],
+                "unpublishedSlug": ctx["unpublished_slug"],
+                "flakeCaseKey": ctx["flake_case_key"],
+                "regressionSuite": ctx.get("regression_suite") or None,
+                "regressionRunId": ctx.get("regression_run_id") or None,
             },
             indent=2,
         )

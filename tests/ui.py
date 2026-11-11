@@ -233,6 +233,63 @@ def wait_for_evaluation(driver: WebDriver, timeout: float) -> tuple[str, list[st
     )
 
 
+def wait_error(driver: WebDriver, snippet: str, timeout: float = 30) -> str:
+    """Wait until a visible ``p.error`` contains ``snippet``."""
+    needle = snippet.lower()
+
+    def check(d: WebDriver):
+        for error in visible_errors(d):
+            if needle in error.lower():
+                return error
+        return False
+
+    return wait(driver, timeout).until(check)
+
+
+def browser_json(
+    driver: WebDriver,
+    method: str,
+    path: str,
+    body: dict | None = None,
+    token: bool = True,
+) -> dict:
+    """Call the same-origin API from the page. ``token`` reads the UI session."""
+    return driver.execute_async_script(
+        """
+        const done = arguments[arguments.length - 1];
+        const method = arguments[0];
+        const path = arguments[1];
+        const body = arguments[2];
+        const useToken = arguments[3];
+        const headers = {Accept: 'application/json'};
+        if (body !== null && body !== undefined) {
+          headers['Content-Type'] = 'application/json';
+        }
+        if (useToken) {
+          const token = localStorage.getItem('agentbench.accessToken');
+          if (token) headers['Authorization'] = 'Bearer ' + token;
+        }
+        fetch(path, {
+          method,
+          headers,
+          body: body === null || body === undefined ? undefined : JSON.stringify(body),
+        })
+          .then(async (response) => {
+            const text = await response.text();
+            let parsed = null;
+            try { parsed = text ? JSON.parse(text) : null; }
+            catch (err) { parsed = {detail: text}; }
+            done({status: response.status, body: parsed});
+          })
+          .catch((err) => done({status: 0, body: {detail: String(err)}}));
+        """,
+        method,
+        path,
+        body,
+        token,
+    )
+
+
 def export_statuses(driver: WebDriver) -> list[tuple[str, int]]:
     """Network responses recorded since the last performance-log drain."""
     found: list[tuple[str, int]] = []

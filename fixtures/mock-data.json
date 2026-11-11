@@ -5,6 +5,12 @@
       "email": "selenium-mock@example.com",
       "password": "password123",
       "displayName": "Selenium Mock"
+    },
+    {
+      "role": "viewer",
+      "email": "selenium-viewer@example.com",
+      "password": "password123",
+      "displayName": "Selenium Viewer"
     }
   ],
   "organizations": [
@@ -68,7 +74,81 @@
             }
           ]
         }
-      ]
+      ],
+      "members": [
+        {
+          "email": "selenium-viewer@example.com",
+          "role": "VIEWER"
+        }
+      ],
+      "edge": {
+        "benchmarkName": "Selenium Edge Bench",
+        "benchmarkDescription": "Draft hidden suite plus a board that the seed leaves unpublished",
+        "draftVersion": "0.9.0",
+        "draftChangelog": "Kept as DRAFT so hidden and visible suites stay editable",
+        "emptyVersion": "0.0.0-empty",
+        "publishedVersion": "1.0.0-edge",
+        "publishedChangelog": "Published only so its public board can be unpublished",
+        "draftTask": {
+          "slug": "edge-visibility",
+          "title": "Edge visibility",
+          "prompt": "Compare the visible suite with the hidden suite.",
+          "acceptanceCriteria": "Visible suite is readable. Hidden fixture stays off the viewer page.",
+          "category": "bugfix",
+          "difficulty": "EASY",
+          "languageTags": ["java"],
+          "timeoutSec": 90
+        },
+        "publishedTask": {
+          "slug": "edge-publish",
+          "title": "Edge publish task",
+          "prompt": "Task that exists only so this version can be published and then unpublished.",
+          "acceptanceCriteria": "Visible suite is present.",
+          "category": "bugfix",
+          "difficulty": "EASY",
+          "languageTags": ["java"],
+          "timeoutSec": 90
+        },
+        "visibleSuite": {
+          "framework": "junit",
+          "entryCommand": "mvn -B -q test",
+          "fixtureContent": "VISIBLE-FIXTURE-SELENIUM\n",
+          "caseCount": 1
+        },
+        "hiddenSuite": {
+          "framework": "junit",
+          "entryCommand": "mvn -B -q -Dtest=HiddenIT test",
+          "fixtureContent": "HIDDEN-FIXTURE-SECRET-SELENIUM\n",
+          "caseCount": 1
+        },
+        "unpublishedBoard": {
+          "slug": "selenium-edge-unpublished",
+          "title": "Selenium edge unpublished"
+        },
+        "flake": {
+          "caseKey": "maven-junit.runner",
+          "reason": "Seeded Selenium flake quarantine for maven-junit.runner"
+        }
+      }
     }
-  ]
+  ],
+  "regressionRun": {
+    "gitRepo": "https://github.com/Sai-333/agentbench",
+    "gitBranch": "selenium-mock",
+    "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "suiteName": "selenium-mock",
+    "cases": [
+      {
+        "name": "mock-seed::test_passes",
+        "status": "passed",
+        "durationMs": 120
+      },
+      {
+        "name": "mock-seed::test_fails",
+        "status": "failed",
+        "durationMs": 80,
+        "message": "mock failure"
+      }
+    ]
+  }
 }
