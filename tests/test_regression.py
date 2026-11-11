@@ -260,10 +260,14 @@ class TestAgentBenchRegression:
         ctx["health"] = True
 
     def test_14_regression_runs(self, driver, base_url, ctx):
+        """AgentBench application regression (platform top-bar), not an org tab."""
         _require(ctx, "signed_in", "regression_suite", "regression_passed_case", "regression_failed_case")
         driver.get(base_url + "/")
         wait_outcome(driver, ctx["display_name"])
+        # Top-bar platform control (button.tab); outside consumer org workspace tabs.
         open_tab(driver, "Regression runs", "Regression runs")
+        wait_outcome(driver, "application regression")
+        wait_outcome(driver, "Not consumer")
         wait_outcome(driver, ctx["regression_suite"])
 
         def find_run(d):

@@ -1,6 +1,6 @@
 # AgentBench Selenium regression
 
-Python 3 + Selenium 4 + pytest drive the real AgentBench UI in headless Chrome. The suite does not live in the application repo. It expects a Compose stack started from [Sai-333/agentbench](https://github.com/Sai-333/agentbench) (verified against `main` at `4956497`).
+Python 3 + Selenium 4 + pytest drive the real AgentBench UI in headless Chrome. This is AgentBench *application* regression (platform-scoped results), not a per-consumer suite. The suite does not live in the application repo. It expects a Compose stack started from [Sai-333/agentbench](https://github.com/Sai-333/agentbench) (verified against `main` at `12228c5`).
 
 ## Run against Compose
 
@@ -69,7 +69,7 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 6. **Export CSV** on the org leaderboard returns HTTP 200 or a downloaded `.csv`.
 7. The seeded public board link opens. The fixture title, comment, and up-vote tally are visible.
 8. The Ops health panel loads.
-9. **Regression runs** opens after the fixture run exists. The mock-seeded case rows show `mock-seed::test_passes` as passed and `mock-seed::test_fails` as failed.
+9. Top-bar **Regression runs** (AgentBench application / platform surface — not an org workspace tab) opens after the fixture run exists. The mock-seeded case rows show `mock-seed::test_passes` as passed and `mock-seed::test_fails` as failed.
 
 `tests/test_regression_edges.py` then runs, still in the same browser session:
 
