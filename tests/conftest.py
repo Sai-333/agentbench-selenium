@@ -128,30 +128,26 @@ def _allow_downloads(browser, download_dir: Path) -> None:
             continue
 
 
+@pytest.fixture(scope="session", autouse=True)
+def seeded(require_stack, api_url: str) -> dict:
+    """Upsert fixtures/mock-data.json before any case. Reruns reuse the same rows."""
+    from tests.seed import seed_mock_data
+
+    ctx = seed_mock_data(api_url)
+    print(
+        "\nSEEDED "
+        f"email={ctx['email']} org={ctx['org_slug']} project={ctx['project_name']} "
+        f"benchmark={ctx['benchmark_name']} version={ctx['version']} "
+        f"task={ctx['task_slug']} agent={ctx['agent_name']} "
+        f"board={ctx['public_slug']} up={ctx['up_count']}"
+    )
+    return ctx
+
+
 @pytest.fixture(scope="session")
-def ctx() -> dict:
-    """Shared end-to-end identities. Tests run in definition order in one session."""
-    raw = os.environ.get("AGENTBENCH_RUN_ID", "").strip() or time.strftime("%H%M%S")
-    # Lowercase kebab-safe token so org and public slugs pass the UI pattern.
-    suffix = "".join(ch for ch in raw.lower() if ch.isalnum()) or "run"
-    suffix = f"{suffix}{os.getpid() % 10000:04d}"
-    return {
-        "suffix": suffix,
-        "email": f"selenium-{suffix}@example.com",
-        "password": os.environ.get("AGENTBENCH_PASSWORD", "password123"),
-        "display_name": f"Selenium {suffix}",
-        "org_name": f"Selenium Org {suffix}",
-        "org_slug": f"sel-org-{suffix}",
-        "project_name": f"Selenium Project {suffix}",
-        "benchmark_name": f"Selenium Bench {suffix}",
-        "version": "1.0.0",
-        "task_slug": "hello-java",
-        "task_title": f"Hello Java {suffix}",
-        "agent_name": f"Fake Demo {suffix}",
-        "public_slug": f"sel-board-{suffix}",
-        "public_title": f"Selenium board {suffix}",
-        "comment": f"Selenium comment {suffix}",
-    }
+def ctx(seeded: dict) -> dict:
+    """Fixture identities shared by the ordered session. Tests record flags on this dict."""
+    return seeded
 
 
 @pytest.hookimpl(hookwrapper=True)

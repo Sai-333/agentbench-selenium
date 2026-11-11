@@ -30,7 +30,17 @@ pip install -r requirements.txt
 pytest
 ```
 
-Pytest waits up to `AGENTBENCH_STARTUP_TIMEOUT` seconds (default 180) for those three checks before opening Chrome. Tests share one browser session and must run in definition order in a single process. Do not shard or randomize them.
+Every `pytest` run seeds [fixtures/mock-data.json](fixtures/mock-data.json) through the API before any case. The seed is idempotent: fixed emails and slugs are registered or reused, projects and benchmarks are created or updated, the published Java task is reused, and the public board's comments are reset to the fixture rows. A second run does not invent new users.
+
+To seed without opening Chrome:
+
+```bash
+python tests/seed.py
+```
+
+That command uses `AGENTBENCH_API_URL` (default `http://localhost:8080`) and prints the seeded email, slugs, and public-board vote tally. It does not print the mock password.
+
+Pytest waits up to `AGENTBENCH_STARTUP_TIMEOUT` seconds (default 180) for those three checks, seeds, then opens Chrome. Tests share one browser session and must run in definition order in a single process. Do not shard or randomize them.
 
 Headless Chrome is the default (`--headless=new`, `--no-sandbox`, `--disable-dev-shm-usage`). Set `HEADLESS=0` to watch a local browser. `CHROME_BIN` overrides the Chrome binary (default `/usr/local/bin/google-chrome`). Selenium Manager downloads a matching ChromeDriver on first run.
 
@@ -39,29 +49,26 @@ Headless Chrome is the default (`--headless=new`, `--no-sandbox`, `--disable-dev
 | Variable | Default | Purpose |
 |---|---|---|
 | `AGENTBENCH_BASE_URL` | `http://localhost:3000` | UI origin |
-| `AGENTBENCH_API_URL` | `http://localhost:8080` | Liveness and readiness probes |
-| `AGENTBENCH_STARTUP_TIMEOUT` | `180` | Seconds to wait for Compose |
-| `AGENTBENCH_PASSWORD` | `password123` | Password used for the fresh account (min 8) |
-| `AGENTBENCH_RUN_ID` | time + pid | Suffix for emails, slugs, and names so reruns do not collide |
+| `AGENTBENCH_API_URL` | `http://localhost:8080` | Health probes and the mock-data seed |
+| `AGENTBENCH_STARTUP_TIMEOUT` | `180` | Seconds to wait for Compose before seeding |
 | `AGENTBENCH_EVAL_TIMEOUT` | `240` | Seconds to wait for an evaluation to leave `QUEUED` or finish |
 | `HEADLESS` | `1` | Set `0` to show Chrome |
 | `CHROME_BIN` | `/usr/local/bin/google-chrome` | Browser binary |
 
-No API keys, cloud credentials, or `.env` secrets are required. Each run registers `selenium-<id>@example.com`.
+No API keys, cloud credentials, or `.env` secrets are required. The signed-in user is `selenium-mock@example.com` from the fixture (mock password `password123`). Tests do not generate a unique email per run.
 
 ## What is covered
 
-The suite drives `http://localhost:3000` only (the UI proxies `/api`):
+The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed creates the rows below; the cases sign in as that user and read them:
 
 1. App shell loads and the browser console has no fatal error.
-2. Register, log out, and log in with a unique email.
-3. Create an organization, a project, and a versioned benchmark.
-4. Add a Java task, save a visible JUnit suite (`mvn -B -q test`), and publish the version.
-5. Register a **FAKE** agent and enqueue an evaluation. The test passes when the detail view reaches `COMPLETED`, `FAILED`, `CANCELLED`, or `TIMED_OUT`, or when a stage past `QUEUED` is visible. The terminal state is printed as `EVAL_STATE`.
-6. Overview shows evaluation activity, and the org leaderboard page loads (empty is valid when nothing has been scored yet).
-7. **Export CSV** on the org leaderboard returns HTTP 200 or a downloaded `.csv`.
-8. OWNER publishes the board, the public page opens, an up vote is counted, and a comment is visible.
-9. The Ops health panel loads.
+2. Log in as the seeded user, log out, and log in again.
+3. The seeded organization, project, and published benchmark are visible, including the Java task and visible JUnit suite (`mvn -B -q test`).
+4. The seeded **FAKE** agent is visible. The suite enqueues an evaluation against that agent and the seeded published task. The test passes when the detail view reaches `COMPLETED`, `FAILED`, `CANCELLED`, or `TIMED_OUT`, or when a stage past `QUEUED` is visible. The terminal state is printed as `EVAL_STATE`.
+5. Overview shows evaluation activity, and the org leaderboard page loads (empty is valid when nothing has been scored yet).
+6. **Export CSV** on the org leaderboard returns HTTP 200 or a downloaded `.csv`.
+7. The seeded public board link opens. The fixture title, comment, and up-vote tally are visible.
+8. The Ops health panel loads.
 
 Failure screenshots and page HTML are written under `reports/` (gitignored).
 
@@ -74,4 +81,4 @@ Failure screenshots and page HTML are written under `reports/` (gitignored).
 
 ## Adding a test for a new feature
 
-Add one ordered method to `tests/test_regression.py` (prefix `test_NN_`) that reuses the session `driver` and `ctx`, calls `_require` for the flags it depends on, and drives the new control through the real UI at `AGENTBENCH_BASE_URL`. Find forms by their `h3` and fields by the label text, wait until the new success text is visible, and fail on `p.error` instead of sleeping. Use a unique email, slug, and comment from `ctx` so a second run does not collide with data left in Postgres. If the feature needs Oracle, Firecracker, live AWS, or a Python/Node runner image, do not pretend the default Compose stack covers it: guard the test with an explicit environment opt-in and document the skip in this section. Keep the new step in the same single-process order; later steps should `_require` the new flag so a broken feature stays one failure rather than a cascade.
+Add the row the case needs to `fixtures/mock-data.json` and teach `tests/seed.py` to upsert it. Then add one ordered method to `tests/test_regression.py` (prefix `test_NN_`) that reuses the session `driver` and `ctx`, calls `_require` for the flags it depends on, and drives the new control through the real UI at `AGENTBENCH_BASE_URL`. Find forms by their `h3` and fields by the label text, wait until the new success text is visible, and fail on `p.error` instead of sleeping. Read emails, slugs, and comments from `ctx` (the fixture). Do not invent a unique email inside a test. If the feature needs Oracle, Firecracker, live AWS, or a Python/Node runner image, do not pretend the default Compose stack covers it: guard the test with an explicit environment opt-in and document the skip in this section. Keep the new step in the same single-process order; later steps should `_require` the new flag so a broken feature stays one failure rather than a cascade.

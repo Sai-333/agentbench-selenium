@@ -1,0 +1,74 @@
+{
+  "users": [
+    {
+      "role": "owner",
+      "email": "selenium-mock@example.com",
+      "password": "password123",
+      "displayName": "Selenium Mock"
+    }
+  ],
+  "organizations": [
+    {
+      "name": "Selenium Mock Org",
+      "slug": "selenium-mock-org",
+      "ownerEmail": "selenium-mock@example.com",
+      "projects": [
+        {
+          "name": "Selenium Mock Project",
+          "description": "Seeded project for the Selenium regression suite"
+        }
+      ],
+      "benchmarks": [
+        {
+          "name": "Selenium Mock Bench",
+          "description": "Java path only; pytest and Jest are out of scope",
+          "projectName": "Selenium Mock Project",
+          "version": "1.0.0",
+          "changelog": "Seeded mock benchmark",
+          "task": {
+            "slug": "hello-java",
+            "title": "Hello Java",
+            "prompt": "Add a greeting. Java/JUnit path used by this regression.",
+            "acceptanceCriteria": "Visible JUnit suite is configured.",
+            "category": "bugfix",
+            "difficulty": "EASY",
+            "languageTags": ["java"],
+            "timeoutSec": 90
+          },
+          "visibleSuite": {
+            "framework": "junit",
+            "entryCommand": "mvn -B -q test",
+            "fixtureContent": "// selenium regression visible junit fixture\n",
+            "caseCount": 1
+          }
+        }
+      ],
+      "agents": [
+        {
+          "name": "Selenium Mock Agent",
+          "adapterType": "FAKE"
+        }
+      ],
+      "publicBoards": [
+        {
+          "benchmarkName": "Selenium Mock Bench",
+          "version": "1.0.0",
+          "slug": "selenium-mock-board",
+          "title": "Selenium mock board",
+          "comments": [
+            {
+              "displayName": "Selenium Guest",
+              "body": "Seeded comment on the Selenium mock board."
+            }
+          ],
+          "votes": [
+            {
+              "value": 1,
+              "voterFingerprint": "seleniummockvoter01"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

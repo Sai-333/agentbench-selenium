@@ -1,8 +1,9 @@
 """End-to-end UI regression against a running AgentBench Compose stack.
 
-Tests share one browser session and run in definition order. Each step records
-a flag on `ctx`; later steps skip with an explicit reason when an earlier
-step did not finish, so a single product failure is not reported as a cascade.
+Tests share one browser session and run in definition order. Identities come
+from the seeded mock fixture, not from per-run emails. Each step records a
+flag on `ctx`; later steps skip with an explicit reason when an earlier step
+did not finish, so a single product failure is not reported as a cascade.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import time
 from pathlib import Path
 
 import pytest
+from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 
@@ -26,6 +28,7 @@ from tests.ui import (
     fill,
     form_by_heading,
     open_tab,
+    scroll,
     visible_errors,
     wait,
     wait_for_evaluation,
@@ -37,6 +40,21 @@ def _require(ctx: dict, *flags: str) -> None:
     missing = [flag for flag in flags if not ctx.get(flag)]
     if missing:
         pytest.skip("blocked by earlier step: " + ", ".join(missing))
+
+
+def _click_named_item(driver, text: str) -> None:
+    def find(d):
+        for element in d.find_elements(By.CSS_SELECTOR, "button.list-item"):
+            try:
+                if element.is_displayed() and text in element.text:
+                    return element
+            except StaleElementReferenceException:
+                return False
+        return False
+
+    button = wait(driver, 20).until(find)
+    scroll(driver, button)
+    button.click()
 
 
 def _auth_form(driver):
@@ -55,26 +73,23 @@ class TestAgentBenchRegression:
         assert not severe, "Console SEVERE on app shell:\n" + "\n".join(severe)
         ctx["shell"] = True
 
-    def test_02_register(self, driver, ctx):
+    def test_02_login_seeded_user(self, driver, ctx):
         _require(ctx, "shell")
-        click_button(driver, "Register")
-        wait(driver).until(
-            lambda d: d.find_elements(By.CSS_SELECTOR, "form input[name='displayName']")
-        )
+        click_button(driver, "Log in")
         form = _auth_form(driver)
-        fill(driver, form, "Display name", ctx["display_name"])
         fill(driver, form, "Email", ctx["email"])
         fill(driver, form, "Password", ctx["password"])
         click_submit(driver, form, expected=ctx["display_name"], timeout=60)
         assert ctx["email"] in driver.find_element(By.TAG_NAME, "body").text
         assert driver.find_elements(By.XPATH, "//button[normalize-space()='Log out']")
-        ctx["registered"] = True
+        ctx["signed_in"] = True
 
     def test_03_logout(self, driver, ctx):
-        _require(ctx, "registered")
+        _require(ctx, "signed_in")
         click_button(driver, "Log out")
         wait_outcome(driver, "Sign in to manage organizations")
         assert not driver.find_elements(By.XPATH, "//button[normalize-space()='Log out']")
+        ctx["signed_in"] = False
         ctx["logged_out"] = True
 
     def test_04_login(self, driver, ctx):
@@ -85,77 +100,43 @@ class TestAgentBenchRegression:
         fill(driver, form, "Password", ctx["password"])
         click_submit(driver, form, expected=ctx["display_name"], timeout=60)
         assert ctx["email"] in driver.find_element(By.TAG_NAME, "body").text
-        ctx["logged_in"] = True
+        ctx["signed_in"] = True
 
-    def test_05_create_org(self, driver, ctx):
-        _require(ctx, "logged_in")
-        form = form_by_heading(driver, "Create organization")
-        fill(driver, form, "Name", ctx["org_name"])
-        fill(driver, form, "Slug", ctx["org_slug"])
-        click_submit(driver, form, expected=ctx["org_name"])
+    def test_05_seeded_org(self, driver, ctx):
+        _require(ctx, "signed_in")
+        wait_outcome(driver, ctx["org_name"])
+        _click_named_item(driver, ctx["org_name"])
+        wait_outcome(driver, ctx["org_slug"])
         assert ctx["org_slug"] in driver.find_element(By.TAG_NAME, "body").text
         ctx["org"] = True
 
-    def test_06_create_project(self, driver, ctx):
+    def test_06_seeded_project(self, driver, ctx):
         _require(ctx, "org")
         open_tab(driver, "Projects", "Projects")
-        form = form_by_heading(driver, "Create project")
-        fill(driver, form, "Name", ctx["project_name"])
-        fill(driver, form, "Description", "Selenium regression project")
-        click_submit(driver, form, expected=ctx["project_name"])
+        wait_outcome(driver, ctx["project_name"])
+        body = driver.find_element(By.TAG_NAME, "body").text
+        assert ctx["project_description"] in body
+        assert_no_error(driver)
         ctx["project"] = True
 
-    def test_07_create_benchmark_version(self, driver, ctx):
+    def test_07_seeded_benchmark(self, driver, ctx):
         _require(ctx, "project")
         open_tab(driver, "Benchmarks", "Benchmarks")
-        form = form_by_heading(driver, "Create benchmark")
-        fill(driver, form, "Name", ctx["benchmark_name"])
-        fill(driver, form, "Description", "Java path only; pytest and Jest are out of scope")
-        project = Select(field(form, "Project (optional)"))
-        project.select_by_visible_text(ctx["project_name"])
-        click_submit(driver, form, expected=ctx["benchmark_name"])
-
-        version_form = form_by_heading(driver, "Create draft version")
-        fill(driver, version_form, "Version", ctx["version"])
-        fill(driver, version_form, "Changelog", "Selenium draft")
-        click_submit(driver, version_form, expected="DRAFT")
-
-        task_form = form_by_heading(driver, "Add task")
-        fill(driver, task_form, "Slug", ctx["task_slug"])
-        fill(driver, task_form, "Title", ctx["task_title"])
-        fill(driver, task_form, "Prompt", "Add a greeting. Java/JUnit path used by this regression.")
-        fill(driver, task_form, "Acceptance criteria", "Visible JUnit suite is configured.")
-        fill(driver, task_form, "Category", "bugfix")
-        fill(driver, task_form, "Language tags (comma-separated)", "java")
-        fill(driver, task_form, "Timeout (sec)", "90")
-        click_submit(driver, task_form, expected=ctx["task_title"])
-
-        suite = form_by_heading(driver, "Visible suite")
-        fill(driver, suite, "Framework", "junit")
-        fill(driver, suite, "Entry command", "mvn -B -q test")
-        fill(
-            driver,
-            suite,
-            "Fixture content",
-            "// selenium regression visible junit fixture\n",
-        )
-        fill(driver, suite, "Case count", "1")
-        click_submit(driver, suite, expected="Visible suite: junit")
-
-        click_button(driver, "Publish version (immutable)")
+        _click_named_item(driver, ctx["benchmark_name"])
+        wait_outcome(driver, ctx["version"])
         wait_outcome(driver, "PUBLISHED")
+        wait_outcome(driver, ctx["task_title"])
+        wait_outcome(driver, "Visible suite: junit")
+        assert ctx["task_slug"] in driver.find_element(By.TAG_NAME, "body").text
         assert_no_error(driver)
         ctx["benchmark"] = True
 
-    def test_08_register_fake_agent(self, driver, ctx):
+    def test_08_seeded_agent(self, driver, ctx):
         _require(ctx, "benchmark")
         open_tab(driver, "Agents", "Agents")
-        form = form_by_heading(driver, "Register agent")
-        fill(driver, form, "Name", ctx["agent_name"])
-        adapter = Select(field(form, "Adapter"))
-        adapter.select_by_value("FAKE")
-        click_submit(driver, form, expected=ctx["agent_name"])
+        wait_outcome(driver, ctx["agent_name"])
         assert "FAKE" in driver.find_element(By.TAG_NAME, "body").text
+        assert_no_error(driver)
         ctx["agent"] = True
 
     def test_09_start_evaluation(self, driver, ctx):
@@ -242,47 +223,30 @@ class TestAgentBenchRegression:
         ctx["export_statuses"] = statuses
         ctx["exported"] = True
 
-    def test_12_public_leaderboard_comment_and_vote(self, driver, base_url, ctx):
-        _require(ctx, "analytics")
+    def test_12_public_leaderboard(self, driver, base_url, ctx):
+        _require(ctx, "org")
         open_tab(driver, "Leaderboard", "Org leaderboard")
-        # Publication state arrives with the leaderboard request and resets the slug field.
-        wait(driver, 30).until(
+        link = wait(driver, 30).until(
             lambda d: d.find_elements(
-                By.XPATH, "//form[.//label[normalize-space(text()[1])='Public slug']]"
+                By.CSS_SELECTOR, f"a[href*='/public/leaderboards/{ctx['public_slug']}']"
             )
-            and "Loading" not in d.find_element(By.TAG_NAME, "body").text
-        )
-        form = driver.find_element(
-            By.XPATH, "//form[.//label[normalize-space(text()[1])='Public slug']]"
-        )
-        fill(driver, form, "Public slug", ctx["public_slug"])
-        fill(driver, form, "Title", ctx["public_title"])
-        click_submit(driver, form, expected=f"/public/leaderboards/{ctx['public_slug']}")
-
-        link = driver.find_element(
-            By.CSS_SELECTOR, f"a[href*='/public/leaderboards/{ctx['public_slug']}']"
-        )
+        )[0]
         href = link.get_attribute("href")
         assert href, "Public leaderboard link had no href"
         driver.get(href)
         wait_outcome(driver, "Community")
-        assert ctx["public_title"] in driver.find_element(By.TAG_NAME, "body").text
+        wait_outcome(driver, ctx["public_title"])
+        wait_outcome(driver, ctx["comment"])
+        wait_outcome(driver, f"▲ Up ({ctx['up_count']})")
+        body = driver.find_element(By.TAG_NAME, "body").text
+        assert ctx["comment_author"] in body
+        assert f"Score {ctx['score']}" in body
+        assert "No comments yet." not in body
         assert_no_error(driver)
-
-        click_button(driver, "▲ Up (0)")
-        wait_outcome(driver, "▲ Up (1)")
-        assert "Score 1" in driver.find_element(By.TAG_NAME, "body").text
-
-        comment_form = driver.find_element(By.CSS_SELECTOR, "form.comment-form")
-        fill(driver, comment_form, "Display name", "Selenium Guest")
-        fill(driver, comment_form, "Comment", ctx["comment"])
-        click_submit(driver, comment_form, expected=ctx["comment"])
-        assert "Selenium Guest" in driver.find_element(By.TAG_NAME, "body").text
-        assert "No comments yet." not in driver.find_element(By.TAG_NAME, "body").text
         ctx["public"] = True
 
     def test_13_ops_health(self, driver, base_url, ctx):
-        _require(ctx, "logged_in")
+        _require(ctx, "signed_in")
         driver.get(base_url + "/")
         wait_outcome(driver, ctx["display_name"])
         open_tab(driver, "Ops", "System health")
