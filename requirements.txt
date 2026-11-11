@@ -1,0 +1,2 @@
+selenium>=4.27,<5
+pytest>=8.3,<9
