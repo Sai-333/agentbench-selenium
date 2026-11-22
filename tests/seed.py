@@ -7,7 +7,8 @@ upserted by the fixture fingerprint (the API has no vote-delete).
 
 Optional fixture rows are also upserted when present: a VIEWER member, a
 draft benchmark with visible and hidden suites, a published version whose
-public board is left unpublished, and one active flake quarantine.
+public board is left unpublished, one active flake quarantine, and one
+organization owned by a different user so the mock owner is not a member.
 """
 
 from __future__ import annotations
@@ -676,16 +677,63 @@ def _ensure_regression_run(base: str, token: str, run: dict) -> dict:
     return created
 
 
+def _seed_isolated_org(base: str, fixture: dict, owner_email: str, owner_token: str) -> dict:
+    """Upsert the one organization that belongs to somebody other than the suite owner."""
+    users = {user["email"]: user for user in fixture["users"]}
+    isolated = [org for org in fixture["organizations"] if org.get("ownerEmail") != owner_email]
+    if len(isolated) != 1:
+        raise RuntimeError(
+            "fixtures/mock-data.json needs exactly one organization owned by a different user"
+        )
+    org = isolated[0]
+    email = org.get("ownerEmail") or ""
+    user = users.get(email)
+    if user is None:
+        raise RuntimeError(
+            f"Organization {org.get('slug')} ownerEmail {email} is not a fixture user"
+        )
+    if user.get("role", "owner") == "owner":
+        raise RuntimeError(f"{email} is the suite owner and cannot also own {org.get('slug')}")
+    projects = org.get("projects") or []
+    if len(projects) != 1:
+        raise RuntimeError(f"Isolated organization {org.get('slug')} needs exactly one project")
+    token = _ensure_account(base, user)
+    org_id = _ensure_org(base, token, org)
+    project = projects[0]
+    project_id = _ensure_project(base, token, org_id, project)
+    _, owner_orgs = _api(base, "GET", "/api/v1/orgs", token=owner_token)
+    if any(item.get("slug") == org["slug"] for item in owner_orgs):
+        raise RuntimeError(f"Suite owner is a member of isolated org {org['slug']}")
+    _, tenant_orgs = _api(base, "GET", "/api/v1/orgs", token=token)
+    owner_slug = next(
+        item["slug"] for item in fixture["organizations"] if item.get("ownerEmail") == owner_email
+    )
+    if any(item.get("slug") == owner_slug for item in tenant_orgs):
+        raise RuntimeError(f"{email} is a member of the suite owner org {owner_slug}")
+    return {
+        "email": user["email"],
+        "password": user["password"],
+        "display_name": user["displayName"],
+        "org_name": org["name"],
+        "org_slug": org["slug"],
+        "org_id": org_id,
+        "project_name": project["name"],
+        "project_description": project.get("description") or "",
+        "project_id": project_id,
+    }
+
+
 def seed_mock_data(api_url: str, fixture: dict | None = None) -> dict:
     """Upsert the committed fixture. Returns the identities the UI tests use."""
     data = fixture if fixture is not None else load_fixture()
     base = api_url.rstrip("/")
     user = _owner(data)
-    if len(data["organizations"]) != 1:
-        raise RuntimeError("This suite seeds exactly one organization from the fixture")
-    org = data["organizations"][0]
-    if org.get("ownerEmail") != user["email"]:
-        raise RuntimeError("organization.ownerEmail must match the owner user email")
+    owned = [org for org in data["organizations"] if org.get("ownerEmail") == user["email"]]
+    if len(owned) != 1:
+        raise RuntimeError(
+            "fixtures/mock-data.json needs exactly one organization owned by the owner user"
+        )
+    org = owned[0]
     if len(org.get("projects") or []) != 1 or len(org.get("benchmarks") or []) != 1:
         raise RuntimeError("The suite fixture needs one project and one benchmark")
     if len(org.get("agents") or []) != 1 or len(org.get("publicBoards") or []) != 1:
@@ -720,12 +768,13 @@ def seed_mock_data(api_url: str, fixture: dict | None = None) -> dict:
     edge = org.get("edge") or {}
     viewer = _user_by_role(data, "viewer") if any(user.get("role") == "viewer" for user in data["users"]) else None
     if viewer is None or not edge:
-        raise RuntimeError("fixtures/mock-data.json needs a viewer user and organizations[0].edge")
+        raise RuntimeError("fixtures/mock-data.json needs a viewer user and an edge block on the owner org")
     _ensure_account(base, viewer)
     member = next(item for item in (org.get("members") or []) if item.get("email") == viewer["email"])
     _ensure_member(base, token, org_id, viewer["email"], member["role"])
     edge_ids = _ensure_edge_benchmark(base, token, org_id, project_id, edge)
     flake_id = _ensure_flake(base, token, org_id, edge["flake"])
+    tenant = _seed_isolated_org(base, data, user["email"], token)
 
     return {
         "email": user["email"],
@@ -776,6 +825,14 @@ def seed_mock_data(api_url: str, fixture: dict | None = None) -> dict:
         "flake_id": flake_id,
         "edge_benchmark_id": edge_ids["benchmark_id"],
         "draft_version_id": edge_ids["draft_version_id"],
+        "tenant_email": tenant["email"],
+        "tenant_password": tenant["password"],
+        "tenant_display_name": tenant["display_name"],
+        "tenant_org_name": tenant["org_name"],
+        "tenant_org_slug": tenant["org_slug"],
+        "tenant_org_id": tenant["org_id"],
+        "tenant_project_name": tenant["project_name"],
+        "tenant_project_description": tenant["project_description"],
     }
 
 
@@ -808,6 +865,8 @@ def main() -> int:
                 "flakeCaseKey": ctx["flake_case_key"],
                 "regressionSuite": ctx.get("regression_suite") or None,
                 "regressionRunId": ctx.get("regression_run_id") or None,
+                "tenant": ctx.get("tenant_email"),
+                "tenantOrg": ctx.get("tenant_org_slug"),
             },
             indent=2,
         )
