@@ -9,6 +9,8 @@ Optional fixture rows are also upserted when present: a VIEWER member, a
 draft benchmark with visible and hidden suites, a published version whose
 public board is left unpublished, one active flake quarantine, and one
 organization owned by a different user so the mock owner is not a member.
+The owner org seeds two FAKE agents so Compare can show a nonempty matrix
+after both have completed scored evaluations on the published version.
 """
 
 from __future__ import annotations
@@ -736,13 +738,21 @@ def seed_mock_data(api_url: str, fixture: dict | None = None) -> dict:
     org = owned[0]
     if len(org.get("projects") or []) != 1 or len(org.get("benchmarks") or []) != 1:
         raise RuntimeError("The suite fixture needs one project and one benchmark")
-    if len(org.get("agents") or []) != 1 or len(org.get("publicBoards") or []) != 1:
-        raise RuntimeError("The suite fixture needs one agent and one public board")
+    agents = org.get("agents") or []
+    if len(agents) != 2 or len(org.get("publicBoards") or []) != 1:
+        raise RuntimeError(
+            "The suite fixture needs two FAKE agents (primary + compare) and one public board"
+        )
 
     project = org["projects"][0]
     benchmark = org["benchmarks"][0]
-    agent = org["agents"][0]
+    agent = agents[0]
+    compare_agent = agents[1]
     board = org["publicBoards"][0]
+    if agent.get("adapterType") != "FAKE" or compare_agent.get("adapterType") != "FAKE":
+        raise RuntimeError("Both seeded agents must use adapterType FAKE")
+    if agent.get("name") == compare_agent.get("name"):
+        raise RuntimeError("The two seeded agents must have distinct names")
     if benchmark.get("projectName") != project["name"]:
         raise RuntimeError("benchmark.projectName must match the seeded project name")
     if board.get("benchmarkName") != benchmark["name"] or board.get("version") != benchmark["version"]:
@@ -755,6 +765,7 @@ def seed_mock_data(api_url: str, fixture: dict | None = None) -> dict:
     benchmark_id = _ensure_benchmark(base, token, org_id, benchmark, project_id)
     version_id, task_id = _ensure_published_version(base, token, org_id, benchmark_id, benchmark)
     agent_id = _ensure_agent(base, token, org_id, agent)
+    compare_agent_id = _ensure_agent(base, token, org_id, compare_agent)
     _ensure_publication(base, token, org_id, version_id, board)
     _reset_comments(base, token, org_id, version_id, board["slug"], board.get("comments") or [])
     summary = _upsert_votes(base, board["slug"], board.get("votes") or [])
@@ -815,6 +826,8 @@ def seed_mock_data(api_url: str, fixture: dict | None = None) -> dict:
         "task_id": task_id,
         "agent_name": agent["name"],
         "agent_id": agent_id,
+        "compare_agent_name": compare_agent["name"],
+        "compare_agent_id": compare_agent_id,
         "public_slug": board["slug"],
         "public_title": board["title"],
         "comment_author": comment.get("displayName", ""),
@@ -878,6 +891,7 @@ def main() -> int:
                 "version": ctx["version"],
                 "task": ctx["task_slug"],
                 "agent": ctx["agent_name"],
+                "compareAgent": ctx["compare_agent_name"],
                 "publicSlug": ctx["public_slug"],
                 "comment": ctx["comment"],
                 "upCount": ctx["up_count"],
