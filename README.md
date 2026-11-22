@@ -110,6 +110,7 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 - `test_46_agent_context`: `GET .../tasks/{id}/agent-context` for the seeded draft task returns its prompt and visible suite, and omits the hidden suite. Hidden-fixture checks on the page stay in the earlier cases.
 - `test_47_weighted_score_bars`: evaluation detail shows weighted share-of-100 score bars (`Weighted score breakdown` meters). F2P/P2P/P2F/F2F stay labeled counts. The case is skipped when the bars are not rendered.
 - `test_48_public_leaderboard_filter`: the published public board's client-side Search, Agent, and Task filters empty the rows, then Clear restores them. The case is skipped when those controls are not rendered.
+- `test_49_member_invite_role_remove`: on **Members**, add the seeded tenant user as VIEWER, change the role to DEVELOPER, then Remove. Leaves the sole OWNER untouched (backend 409). Skipped when Add member is absent.
 
 Failure screenshots and page HTML are written under `reports/` (gitignored).
 
