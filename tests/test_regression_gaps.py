@@ -9,6 +9,7 @@ There is no GPU case.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -41,6 +42,7 @@ from tests.ui import (
     visible_errors,
     wait,
     wait_error,
+    wait_for_evaluation,
     wait_outcome,
 )
 
@@ -1000,16 +1002,36 @@ class TestAgentBenchGaps:
         _secret_absent(driver, ctx)
         ctx["repository"] = True
 
+    def _enqueue_fake_evaluation(self, driver, ctx) -> str:
+        _open_benchmark(driver, ctx["benchmark_name"])
+        _click_version(driver, ctx["version"])
+        open_tab(driver, "Evaluations", "Evaluations")
+        form = form_by_heading(driver, "Enqueue evaluation")
+        version_id = field(form, "Published version ID").get_attribute("value") or ""
+        task_id = field(form, "Task ID").get_attribute("value") or ""
+        assert len(version_id) >= 32 and len(task_id) >= 32
+        agent = Select(field(form, "Agent"))
+        matching = [option.text for option in agent.options if ctx["agent_name"] in option.text]
+        assert matching, "FAKE agent was not offered on the evaluation form"
+        agent.select_by_visible_text(matching[0])
+        _submit(driver, form)
+        wait_outcome(driver, "Evaluation detail", timeout=60)
+        timeout = float(os.environ.get("AGENTBENCH_EVAL_TIMEOUT", "240"))
+        state, _seen = wait_for_evaluation(driver, timeout)
+        return state
+
     def test_44_costs_when_reported(self, driver, base_url, ctx):
         """Costs with a token or cost row. Empty copy stays in test_30."""
         _require(ctx, "shell", "agent_name")
         _as_owner(driver, base_url, ctx)
         open_tab(driver, "Costs", "Cost analytics")
-
+        if _costs_screen(driver) != "rows":
+            self._enqueue_fake_evaluation(driver, ctx)
+            open_tab(driver, "Costs", "Cost analytics")
         state = wait(driver, 30).until(_costs_screen)
         if state == "empty":
             pytest.skip(
-                "The seeded FAKE adapter reports no tokens or estimated cost, "
+                "No token or estimated-cost row appeared after a FAKE evaluation, "
                 "so the costs screen cannot show a row."
             )
         panel = _panel(driver, "Cost analytics")
@@ -1019,6 +1041,8 @@ class TestAgentBenchGaps:
         assert "by agent" in visible
         assert "by day" in visible
         assert ctx["agent_name"] in panel.text
+        assert "192" in panel.text
+        assert "0.0032" in panel.text
         assert_no_error(driver)
         _secret_absent(driver, ctx)
         ctx["costs_reported"] = True
