@@ -30,7 +30,7 @@ pip install -r requirements.txt
 pytest
 ```
 
-Every `pytest` run seeds [fixtures/mock-data.json](fixtures/mock-data.json) through the API before any case. The seed is idempotent: fixed emails and slugs are registered or reused, projects and benchmarks are created or updated, the published Java task is reused, and the public board's comments are reset to the fixture rows. A second run does not invent new users. The same seed registers `selenium-viewer@example.com` as a VIEWER, keeps a draft benchmark with a visible suite and a hidden suite, publishes then unpublishes `selenium-edge-unpublished`, upserts one flake quarantine for `maven-junit.runner`, reuses one platform regression run (`selenium-mock` at git SHA `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`), and registers `selenium-tenant@example.com` as the only member of `selenium-other-org`.
+Every `pytest` run seeds [fixtures/mock-data.json](fixtures/mock-data.json) through the API before any case. The seed is idempotent: fixed emails and slugs are registered or reused, projects and benchmarks are created or updated, the published Java task is reused, and the public board's comments are reset to the fixture rows. A second run does not invent new users. The same seed registers `selenium-viewer@example.com` as a VIEWER, keeps a draft benchmark with a visible suite and a hidden suite, publishes then unpublishes `selenium-edge-unpublished`, upserts one flake quarantine for `maven-junit.runner`, reuses one platform regression run (`selenium-mock` at git SHA `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`), registers `selenium-tenant@example.com` as the only member of `selenium-other-org`, and registers `selenium-developer@example.com` as a DEVELOPER. The public board also keeps an up vote for `seleniumclickvoter01`.
 
 To seed without opening Chrome:
 
@@ -90,6 +90,15 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 - `test_25_saml_registration_id_rejected`: a registration id that is not lowercase kebab-case is rejected and is not listed.
 - `test_26_published_leaderboard_embed`: **Copy embed snippet** on the published org leaderboard shows an iframe for the seeded public slug. The embed page shows the fixture title and comment and not the hidden fixture text.
 - `test_27_other_org_is_hidden`: `selenium-other-org` is absent from the mock owner's org list. That tenant does not see the mock project. Each session receives `Not a member of this organization` when it reads the other org's projects.
+- `test_28_export_pdf`: **Export PDF** on the org leaderboard and on an evaluation detail.
+- `test_29_list_filters`: evaluation search waits for the debounce, then leaderboard, comparison, and regression outcome filters.
+- `test_30_costs_empty`: the Costs tab shows the empty cost state, and a search shows the filtered empty state.
+- `test_31_secret_and_fake_connection`: an org secret is stored without a live model key, and **Test connection** on the FAKE agent reports ready.
+- `test_32_theme_toggle`: **Dark** and **Light** set `agentbench.theme` on the app shell and the public page.
+- `test_33_public_vote_click`: the public **Down** and **Up** buttons use the seeded `seleniumclickvoter01` fingerprint and leave that vote up.
+- `test_34_developer_role`: `selenium-developer@example.com` can open create and enqueue forms, sees the hidden-suite editor, and cannot manage SAML or create a quarantine.
+- `test_35_oidc_hash_consumed`: a `/#access_token=...` fragment is consumed and does not leave a session.
+- `test_36_members_screen_absent` and `test_37_repository_form_absent` are skipped because those controls are not in the UI.
 
 Failure screenshots and page HTML are written under `reports/` (gitignored).
 
