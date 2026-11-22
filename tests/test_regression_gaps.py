@@ -929,3 +929,54 @@ class TestAgentBenchGaps:
         assert invite or role, "Signed-in admin did not see an invite or role control"
         _secret_absent(driver, ctx)
         ctx["members"] = True
+
+    def test_43_project_repository_form(self, driver, base_url, ctx):
+        """Save a repository URL, validate it, and record a snapshot."""
+        _require(ctx, "shell", "project_name")
+        _as_owner(driver, base_url, ctx)
+        open_tab(driver, "Projects", "Projects")
+        _click_named_item(driver, ctx["project_name"])
+        repo_url = "https://example.com/selenium-mock-repo"
+
+        def form_ready(d):
+            if "Loading repository" in d.find_element(By.TAG_NAME, "body").text:
+                return False
+            return bool(d.find_elements(By.XPATH, "//h3[normalize-space()='Repository']"))
+
+        try:
+            wait(driver, 20).until(form_ready)
+        except Exception:
+            pytest.skip("Repository form is not on the Projects tab, so there is nothing to save.")
+        if not driver.find_elements(By.XPATH, "//button[normalize-space()='Save repository']"):
+            pytest.skip("Save repository is not rendered, so the form cannot be driven.")
+        form = form_by_heading(driver, "Repository")
+        fill(driver, form, "Repository URL", repo_url)
+        fill(driver, form, "Default branch", "main")
+        click_button(driver, "Save repository")
+        wait(driver, 20).until(
+            lambda d: form_by_heading(d, "Repository")
+            .find_element(By.CSS_SELECTOR, "span.status-chip")
+            .get_attribute("data-status")
+            == "UNKNOWN"
+        )
+        assert field(form_by_heading(driver, "Repository"), "Repository URL").get_attribute("value") == repo_url
+        click_button(driver, "Validate")
+        wait(driver, 20).until(
+            lambda d: form_by_heading(d, "Repository")
+            .find_element(By.CSS_SELECTOR, "span.status-chip")
+            .get_attribute("data-status")
+            == "SKIPPED"
+        )
+        assert "Non-GitHub URL; accessibility check skipped" in driver.find_element(By.TAG_NAME, "body").text
+        click_button(driver, "Create snapshot")
+
+        def snapshot_saved(d):
+            items = d.find_elements(
+                By.XPATH, "//h3[normalize-space()='Snapshots']/following-sibling::ul[1]//li"
+            )
+            return any(repo_url in item.text and "main" in item.text for item in items)
+
+        wait(driver, 20).until(snapshot_saved)
+        assert_no_error(driver)
+        _secret_absent(driver, ctx)
+        ctx["repository"] = True

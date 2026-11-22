@@ -104,6 +104,7 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 - `test_40_evaluation_stage_timeline`: evaluation detail shows Baseline, Model call, Patch, Tests, and Score. A queued run keeps every stage pending. The case is skipped when the timeline is not rendered.
 - `test_41_session_refresh`: moving the stored access-token expiry into the refresh window makes **Refresh health** call `POST /api/v1/auth/refresh` and rotate the tokens. A rejected refresh token returns to `Your session ended. Sign in again to continue.` The case is skipped when **Refresh health** is not rendered.
 - `test_42_members_list_and_admin_control`: the owner opens **Members**, sees the seeded viewer and developer, and sees an invite or role control. The case is skipped when that screen is not in the UI.
+- `test_43_project_repository_form`: on the seeded project, save a non-GitHub repository URL, validate it, and create a snapshot. The case is skipped when that form is not on the Projects tab.
 
 Failure screenshots and page HTML are written under `reports/` (gitignored).
 
