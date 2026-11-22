@@ -107,6 +107,7 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 - `test_43_project_repository_form`: on the seeded project, save a non-GitHub repository URL, validate it, and create a snapshot. The case is skipped when that form is not on the Projects tab.
 - `test_44_costs_when_reported`: the Costs tab shows the agent row and the visible uppercase token and by-agent labels when tokens or estimated cost were reported. If the screen is empty, the case enqueues a FAKE evaluation first. It is skipped only when that run still does not produce a row.
 - `test_45_quality_findings`: an evaluation detail shows Checkstyle, SpotBugs, and PMD as did not run. The case does not require a real finding.
+- `test_46_agent_context`: `GET .../tasks/{id}/agent-context` for the seeded draft task returns its prompt and visible suite, and omits the hidden suite. Hidden-fixture checks on the page stay in the earlier cases.
 
 Failure screenshots and page HTML are written under `reports/` (gitignored).
 
