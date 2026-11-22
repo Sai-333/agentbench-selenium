@@ -526,6 +526,12 @@ class TestAgentBenchGaps:
         slugs = [option.text for option in Select(task_select).options if option.text == ctx["task_slug"]]
         assert slugs, "Comparison task filter did not list the seeded task"
         _choose_select_text(driver, task_select, ctx["task_slug"])
+        # Clear so later Compare cases (test_50) are not stuck on the nomatch filter.
+        click_button(driver, "Clear")
+        wait(driver, 10).until(
+            lambda d: field(_panel(d, "Model comparisons"), "Search").get_attribute("value") == ""
+        )
+        _choose_select_text(driver, field(_panel(driver, "Model comparisons"), "Task"), "Any")
 
         open_tab(driver, "Regression runs", "Regression runs")
         runs = _panel(driver, "Regression runs")
@@ -1326,7 +1332,18 @@ class TestAgentBenchGaps:
 
     def test_50_nonempty_comparison_matrix(self, driver, base_url, ctx):
         """Compare two scored FAKE agents on one published version (REG-COMPARE-NONEMPTY)."""
-        _require(ctx, "shell", "agent_name", "compare_agent_name", "version", "task_slug")
+        _require(
+            ctx,
+            "shell",
+            "agent_name",
+            "compare_agent_name",
+            "agent_id",
+            "compare_agent_id",
+            "org_id",
+            "version",
+            "version_id",
+            "task_slug",
+        )
         _as_owner(driver, base_url, ctx)
 
         primary = ctx["agent_name"]
@@ -1339,12 +1356,50 @@ class TestAgentBenchGaps:
                     "comparison matrix needs COMPLETED + VALID scores."
                 )
 
+        # Comparisons only include VALID scores. Compose CI workers usually lack
+        # docker.sock/maven, so FAKE runs can COMPLETE with INCOMPLETE/INFRA scores
+        # and an empty matrix — skip rather than timing out on empty copy.
+        compared = browser_json(
+            driver,
+            "GET",
+            (
+                f"/api/v1/orgs/{ctx['org_id']}/analytics/comparisons"
+                f"?benchmarkVersionId={ctx['version_id']}"
+                f"&agentIds={ctx['agent_id']},{ctx['compare_agent_id']}"
+            ),
+        )
+        assert compared["status"] == 200, compared
+        api_rows = (compared.get("body") or {}).get("rows") or []
+        if len(api_rows) < 2:
+            pytest.skip(
+                "Comparison API returned fewer than two VALID-scored rows after COMPLETED "
+                "FAKE evaluations; Compose without a Docker isolator typically withholds "
+                "weighted scores (INCOMPLETE/INFRA)."
+            )
+
         _open_benchmark(driver, ctx["benchmark_name"])
         _click_version(driver, ctx["version"])
         open_tab(driver, "Compare", "Model comparisons")
         compare = _panel(driver, "Model comparisons")
 
-        version_select = field(compare, "Benchmark version")
+        # Earlier filter cases may leave Search / Task set; clear before asserting.
+        search = field(compare, "Search")
+        if (search.get_attribute("value") or "").strip():
+            clear = compare.find_elements(By.XPATH, ".//button[normalize-space()='Clear']")
+            if clear and clear[0].is_enabled():
+                scroll(driver, clear[0])
+                clear[0].click()
+            else:
+                react_set(driver, search, "")
+            wait(driver, 10).until(
+                lambda d: field(_panel(d, "Model comparisons"), "Search").get_attribute("value")
+                == ""
+            )
+        task_select = field(_panel(driver, "Model comparisons"), "Task")
+        if Select(task_select).first_selected_option.text != "Any":
+            _choose_select_text(driver, task_select, "Any")
+
+        version_select = field(_panel(driver, "Model comparisons"), "Benchmark version")
         published = f"{ctx['version']} (PUBLISHED)"
         options = [option.text for option in Select(version_select).options]
         assert published in options, f"Published version missing from Compare: {options}"
@@ -1363,6 +1418,9 @@ class TestAgentBenchGaps:
         click_button(driver, "Run comparison")
 
         def matrix_ready(d) -> bool | str:
+            errors = visible_errors(d)
+            if errors:
+                raise AssertionError("UI error while waiting for comparison matrix: " + " | ".join(errors))
             panel = _panel(d, "Model comparisons")
             text = panel.text
             if "Select agents and a published benchmark version to compare identical runs." in text:
