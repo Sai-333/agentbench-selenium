@@ -171,6 +171,17 @@ def _panel(driver, heading_prefix: str):
     )
 
 
+def _costs_screen(driver) -> str | bool:
+    """``empty`` when the empty copy is showing, ``rows`` when usage labels are visible."""
+    text = _panel(driver, "Cost analytics").text.lower()
+    if "no token or cost records yet" in text:
+        return "empty"
+    # Stat labels are CSS-uppercase, so Selenium reads "TOTAL TOKENS".
+    if "total tokens" in text and "by agent" in text:
+        return "rows"
+    return False
+
+
 def _eval_rows(driver) -> list[str]:
     panel = _panel(driver, "Evaluations")
     rows: list[str] = []
@@ -500,14 +511,22 @@ class TestAgentBenchGaps:
         ctx["filters"] = True
 
     def test_30_costs_empty(self, driver, base_url, ctx):
+        """Empty cost copy only when nothing has been reported. Rows are test_44."""
         _require(ctx, "shell")
         _as_owner(driver, base_url, ctx)
         open_tab(driver, "Costs", "Cost analytics")
+        state = wait(driver, 30).until(_costs_screen)
+        if state == "rows":
+            assert "no token or cost records yet" not in _panel(driver, "Cost analytics").text.lower()
+            assert_no_error(driver)
+            _secret_absent(driver, ctx)
+            ctx["costs"] = True
+            return
         wait_outcome(driver, "No token or cost records yet")
         fill(driver, _panel(driver, "Cost analytics"), "Search", _FILTER_QUERY)
         wait_outcome(driver, "No cost rows match these filters")
         click_button(driver, "Clear")
-        wait_outcome(driver, "No token or cost records yet")
+        wait(driver, 20).until(lambda d: _costs_screen(d) == "empty")
         assert_no_error(driver)
         _secret_absent(driver, ctx)
         ctx["costs"] = True
@@ -987,25 +1006,19 @@ class TestAgentBenchGaps:
         _as_owner(driver, base_url, ctx)
         open_tab(driver, "Costs", "Cost analytics")
 
-        def settled(d):
-            text = _panel(d, "Cost analytics").text
-            if "No token or cost records yet" in text:
-                return "empty"
-            if "By agent" in text and "Total tokens" in text:
-                return "rows"
-            return False
-
-        state = wait(driver, 30).until(settled)
+        state = wait(driver, 30).until(_costs_screen)
         if state == "empty":
             pytest.skip(
                 "The seeded FAKE adapter reports no tokens or estimated cost, "
                 "so the costs screen cannot show a row."
             )
         panel = _panel(driver, "Cost analytics")
-        assert "No token or cost records yet" not in panel.text
+        visible = panel.text.lower()
+        assert "no token or cost records yet" not in visible
+        assert "total tokens" in visible
+        assert "by agent" in visible
+        assert "by day" in visible
         assert ctx["agent_name"] in panel.text
-        assert panel.find_elements(By.XPATH, ".//h3[normalize-space()='By agent']")
-        assert panel.find_elements(By.XPATH, ".//h3[normalize-space()='By day']")
         assert_no_error(driver)
         _secret_absent(driver, ctx)
         ctx["costs_reported"] = True

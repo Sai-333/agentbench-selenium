@@ -92,7 +92,7 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 - `test_27_other_org_is_hidden`: `selenium-other-org` is absent from the mock owner's org list. That tenant does not see the mock project. Each session receives `Not a member of this organization` when it reads the other org's projects.
 - `test_28_export_pdf`: **Export PDF** on the org leaderboard and on an evaluation detail.
 - `test_29_list_filters`: evaluation search waits for the debounce, then leaderboard, comparison, and regression outcome filters.
-- `test_30_costs_empty`: the Costs tab shows the empty cost state, and a search shows the filtered empty state.
+- `test_30_costs_empty`: when no tokens or cost have been reported, the Costs tab shows the empty copy and a search shows the filtered empty state. When usage rows are already on screen, that empty copy is not required.
 - `test_31_secret_and_fake_connection`: an org secret is stored without a live model key, and **Test connection** on the FAKE agent reports ready.
 - `test_32_theme_toggle`: **Dark** and **Light** set `agentbench.theme` on the app shell and the public page.
 - `test_33_public_vote_click`: the public **Down** and **Up** buttons use the seeded `seleniumclickvoter01` fingerprint and leave that vote up.
@@ -105,7 +105,7 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 - `test_41_session_refresh`: moving the stored access-token expiry into the refresh window makes **Refresh health** call `POST /api/v1/auth/refresh` and rotate the tokens. A rejected refresh token returns to `Your session ended. Sign in again to continue.` The case is skipped when **Refresh health** is not rendered.
 - `test_42_members_list_and_admin_control`: the owner opens **Members**, sees the seeded viewer and developer, and sees an invite or role control. The case is skipped when that screen is not in the UI.
 - `test_43_project_repository_form`: on the seeded project, save a non-GitHub repository URL, validate it, and create a snapshot. The case is skipped when that form is not on the Projects tab.
-- `test_44_costs_when_reported`: the Costs tab shows the agent row, token total, and daily table when tokens or estimated cost were reported. The empty cost copy stays in `test_30`. The case is skipped when the seeded FAKE adapter has not reported either.
+- `test_44_costs_when_reported`: the Costs tab shows the agent row and the visible uppercase token and by-agent labels when tokens or estimated cost were reported. The case is skipped when the seeded FAKE adapter has not reported either.
 
 Failure screenshots and page HTML are written under `reports/` (gitignored).
 
