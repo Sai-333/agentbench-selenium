@@ -789,3 +789,47 @@ class TestAgentBenchGaps:
         )
         assert lines
         ctx["failed_cases_only"] = True
+
+    def test_40_evaluation_stage_timeline(self, driver, base_url, ctx):
+        """Baseline, model call, patch, tests, and score on the evaluation detail."""
+        _require(ctx, "shell")
+        _as_owner(driver, base_url, ctx)
+        self._ensure_evaluation_row(driver, ctx)
+        rows = _panel(driver, "Evaluations").find_elements(By.CSS_SELECTOR, "ul.list button.list-item")
+        assert rows, "No evaluation row to open"
+        rows[0].click()
+        wait(driver, 20).until(
+            lambda d: d.find_elements(By.XPATH, "//h2[normalize-space()='Evaluation detail']")
+        )
+        if not driver.find_elements(By.CSS_SELECTOR, "ol.stage-timeline"):
+            pytest.skip("Stage timeline is not rendered on evaluation detail.")
+        stages = [
+            ("baseline", "Baseline"),
+            ("model", "Model call"),
+            ("patch", "Patch"),
+            ("tests", "Tests"),
+            ("score", "Score"),
+        ]
+        items = driver.find_elements(By.CSS_SELECTOR, "ol.stage-timeline li.stage-step")
+        assert [item.get_attribute("data-stage") for item in items] == [stage_id for stage_id, _label in stages]
+        for item, (stage_id, label) in zip(items, stages):
+            assert item.find_element(By.CSS_SELECTOR, ".stage-name").text == label
+            status = item.get_attribute("data-status")
+            assert status in {"pending", "running", "passed", "failed", "skipped"}
+            assert item.find_element(By.CSS_SELECTOR, ".stage-status").text.strip().lower() in {
+                "pending",
+                "running",
+                "passed",
+                "failed",
+                "skipped",
+                "cancelled",
+                "timed out",
+            }
+        state = driver.find_element(By.CSS_SELECTOR, "section.detail-panel span.status-chip").get_attribute(
+            "data-status"
+        )
+        if state == "QUEUED":
+            assert [item.get_attribute("data-status") for item in items] == ["pending"] * 5
+            assert not driver.find_elements(By.CSS_SELECTOR, "ol.stage-timeline p.error")
+        _secret_absent(driver, ctx)
+        ctx["stage_timeline"] = True
