@@ -833,3 +833,79 @@ class TestAgentBenchGaps:
             assert not driver.find_elements(By.CSS_SELECTOR, "ol.stage-timeline p.error")
         _secret_absent(driver, ctx)
         ctx["stage_timeline"] = True
+
+    def test_41_session_refresh(self, driver, base_url, ctx):
+        """Refresh runs before the access token expires. A rejected refresh returns to sign-in."""
+        _require(ctx, "shell")
+        _as_owner(driver, base_url, ctx)
+        open_tab(driver, "Ops", "System health")
+        if not driver.find_elements(By.XPATH, "//button[normalize-space()='Refresh health']"):
+            pytest.skip("Refresh health is not rendered, so the session client cannot be driven.")
+
+        def stored(key: str) -> str:
+            value = driver.execute_script("return localStorage.getItem(arguments[0]);", key)
+            return value or ""
+
+        def pull_expiry() -> None:
+            driver.execute_script(
+                "localStorage.setItem('agentbench.accessTokenExpiresAt', String(Date.now()));"
+            )
+
+        def refresh_statuses() -> list[int]:
+            found: list[int] = []
+            try:
+                entries = driver.get_log("performance")
+            except Exception:
+                return found
+            for entry in entries:
+                try:
+                    message = json.loads(entry["message"])["message"]
+                except (KeyError, TypeError, json.JSONDecodeError):
+                    continue
+                if message.get("method") != "Network.responseReceived":
+                    continue
+                response = message.get("params", {}).get("response", {})
+                url = str(response.get("url", ""))
+                status = response.get("status")
+                if "/api/v1/auth/refresh" in url and isinstance(status, int):
+                    found.append(status)
+            return found
+
+        before_refresh = stored("agentbench.refreshToken")
+        before_access = stored("agentbench.accessToken")
+        assert before_refresh and before_access
+        pull_expiry()
+        try:
+            driver.get_log("performance")
+        except Exception:
+            pass
+        click_button(driver, "Refresh health")
+        statuses: list[int] = []
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            statuses.extend(refresh_statuses())
+            if 200 in statuses:
+                break
+            errors = visible_errors(driver)
+            if errors:
+                raise AssertionError("Refresh failed: " + " | ".join(errors))
+            time.sleep(0.05)
+        assert 200 in statuses, f"UI did not call POST /api/v1/auth/refresh (statuses={statuses})"
+        wait_outcome(driver, ctx["display_name"])
+        assert driver.find_elements(By.XPATH, "//button[normalize-space()='Log out']")
+        assert stored("agentbench.refreshToken") not in {"", before_refresh}
+        assert stored("agentbench.accessToken") not in {"", before_access}
+        wait_outcome(driver, "Overall")
+
+        driver.execute_script(
+            """
+            localStorage.setItem('agentbench.refreshToken', 'selenium-rejected-refresh-token');
+            localStorage.setItem('agentbench.accessTokenExpiresAt', String(Date.now()));
+            """
+        )
+        click_button(driver, "Refresh health")
+        wait_outcome(driver, "Your session ended. Sign in again to continue.")
+        assert not driver.find_elements(By.XPATH, "//button[normalize-space()='Log out']")
+        assert stored("agentbench.accessToken") == ""
+        assert stored("agentbench.refreshToken") == ""
+        ctx["session_refresh"] = True

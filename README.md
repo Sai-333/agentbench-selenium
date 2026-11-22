@@ -102,6 +102,7 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 - `test_38_evaluation_bound_filters`: failure class, minimum and maximum weighted score, and created-time bounds on the evaluation list.
 - `test_39_failed_cases_only`: **Failed cases only** on an evaluation that has test runs. The case is skipped when that checkbox is not rendered.
 - `test_40_evaluation_stage_timeline`: evaluation detail shows Baseline, Model call, Patch, Tests, and Score. A queued run keeps every stage pending. The case is skipped when the timeline is not rendered.
+- `test_41_session_refresh`: moving the stored access-token expiry into the refresh window makes **Refresh health** call `POST /api/v1/auth/refresh` and rotate the tokens. A rejected refresh token returns to `Your session ended. Sign in again to continue.` The case is skipped when **Refresh health** is not rendered.
 
 Failure screenshots and page HTML are written under `reports/` (gitignored).
 
