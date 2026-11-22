@@ -39,10 +39,12 @@ from tests.ui import (
     form_by_heading,
     open_tab,
     react_set,
+    scroll,
     visible_errors,
     wait,
     wait_error,
     wait_for_evaluation,
+    wait_not_busy,
     wait_outcome,
 )
 
@@ -1222,3 +1224,100 @@ class TestAgentBenchGaps:
         )
         assert_no_error(driver)
         ctx["public_filter"] = True
+
+    def test_49_member_invite_role_remove(self, driver, base_url, ctx):
+        """Invite a registered user, change their role, then remove them."""
+        _require(ctx, "shell", "tenant_email", "tenant_display_name", "email", "display_name")
+        _as_owner(driver, base_url, ctx)
+        tabs = [
+            element
+            for element in driver.find_elements(By.CSS_SELECTOR, "button.tab")
+            if element.is_displayed() and element.text.strip() == "Members"
+        ]
+        if not tabs:
+            pytest.skip("Members tab is not in the UI, so membership cannot be mutated.")
+        tabs[0].click()
+        wait(driver, 20).until(
+            lambda d: d.find_elements(By.XPATH, "//h2[contains(., 'Members')]")
+        )
+        if not driver.find_elements(By.XPATH, "//h3[normalize-space()='Add member']"):
+            pytest.skip("Add member form is not rendered, so invite cannot be driven.")
+
+        email = ctx["tenant_email"]
+        display = ctx["tenant_display_name"]
+
+        def member_item(d, member_email: str):
+            for item in d.find_elements(By.CSS_SELECTOR, "ul.list.plain li"):
+                try:
+                    if item.is_displayed() and member_email in item.text:
+                        return item
+                except StaleElementReferenceException:
+                    return False
+            return None
+
+        def member_gone(d) -> bool:
+            return member_item(d, email) is None
+
+        # A prior interrupted run may have left the tenant on the mock org.
+        leftover = member_item(driver, email)
+        if leftover is not None:
+            remove = leftover.find_elements(By.XPATH, ".//button[normalize-space()='Remove']")
+            assert remove, "Leftover invitee has no Remove control"
+            scroll(driver, remove[0])
+            remove[0].click()
+            wait(driver, 20).until(member_gone)
+            wait_not_busy(driver)
+            assert_no_error(driver)
+
+        def role_value(item, member_display: str) -> str:
+            selects = item.find_elements(
+                By.CSS_SELECTOR, f"select[aria-label='Role for {member_display}']"
+            )
+            if selects:
+                return selects[0].get_attribute("value") or ""
+            badges = item.find_elements(By.CSS_SELECTOR, "span.badge")
+            return badges[0].text.strip() if badges else ""
+
+        form = form_by_heading(driver, "Add member")
+        fill(driver, form, "Email", email)
+        fill(driver, form, "Role", "VIEWER")
+        _submit(driver, form)
+        wait(driver, 20).until(lambda d: member_item(d, email) is not None)
+        wait_not_busy(driver)
+        assert_no_error(driver)
+        invited = member_item(driver, email)
+        assert invited is not None
+        assert role_value(invited, display) == "VIEWER"
+
+        role_select = invited.find_element(
+            By.CSS_SELECTOR, f"select[aria-label='Role for {display}']"
+        )
+        _choose_select_text(driver, role_select, "DEVELOPER")
+
+        def role_is_developer(d) -> bool:
+            item = member_item(d, email)
+            return item is not None and role_value(item, display) == "DEVELOPER"
+
+        wait(driver, 20).until(role_is_developer)
+        wait_not_busy(driver)
+        assert_no_error(driver)
+
+        invited = member_item(driver, email)
+        assert invited is not None
+        remove = invited.find_element(By.XPATH, ".//button[normalize-space()='Remove']")
+        scroll(driver, remove)
+        remove.click()
+        wait(driver, 20).until(member_gone)
+        wait_not_busy(driver)
+        assert_no_error(driver)
+
+        body = driver.find_element(By.TAG_NAME, "body").text
+        assert email not in body
+        assert ctx["email"] in body
+        owner_item = member_item(driver, ctx["email"])
+        assert owner_item is not None
+        assert role_value(owner_item, ctx["display_name"]) == "OWNER"
+        # Sole OWNER must keep Remove hidden (backend 409 if last owner removed).
+        assert not owner_item.find_elements(By.XPATH, ".//button[normalize-space()='Remove']")
+        _secret_absent(driver, ctx)
+        ctx["member_mutate"] = True
