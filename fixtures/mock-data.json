@@ -65,6 +65,10 @@
         {
           "name": "Selenium Mock Agent",
           "adapterType": "FAKE"
+        },
+        {
+          "name": "Selenium Compare Agent",
+          "adapterType": "FAKE"
         }
       ],
       "publicBoards": [

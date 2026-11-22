@@ -1026,7 +1026,8 @@ class TestAgentBenchGaps:
         _secret_absent(driver, ctx)
         ctx["repository"] = True
 
-    def _enqueue_fake_evaluation(self, driver, ctx) -> str:
+    def _enqueue_fake_evaluation(self, driver, ctx, agent_name: str | None = None) -> str:
+        name = agent_name or ctx["agent_name"]
         _open_benchmark(driver, ctx["benchmark_name"])
         _click_version(driver, ctx["version"])
         open_tab(driver, "Evaluations", "Evaluations")
@@ -1035,8 +1036,8 @@ class TestAgentBenchGaps:
         task_id = field(form, "Task ID").get_attribute("value") or ""
         assert len(version_id) >= 32 and len(task_id) >= 32
         agent = Select(field(form, "Agent"))
-        matching = [option.text for option in agent.options if ctx["agent_name"] in option.text]
-        assert matching, "FAKE agent was not offered on the evaluation form"
+        matching = [option.text for option in agent.options if name in option.text]
+        assert matching, f"FAKE agent {name!r} was not offered on the evaluation form"
         agent.select_by_visible_text(matching[0])
         _submit(driver, form)
         wait_outcome(driver, "Evaluation detail", timeout=60)
@@ -1321,3 +1322,85 @@ class TestAgentBenchGaps:
         assert not owner_item.find_elements(By.XPATH, ".//button[normalize-space()='Remove']")
         _secret_absent(driver, ctx)
         ctx["member_mutate"] = True
+
+    def test_50_nonempty_comparison_matrix(self, driver, base_url, ctx):
+        """Compare two scored FAKE agents on one published version (REG-COMPARE-NONEMPTY)."""
+        _require(ctx, "shell", "agent_name", "compare_agent_name", "version", "task_slug")
+        _as_owner(driver, base_url, ctx)
+
+        primary = ctx["agent_name"]
+        secondary = ctx["compare_agent_name"]
+        for agent_name in (primary, secondary):
+            state = self._enqueue_fake_evaluation(driver, ctx, agent_name=agent_name)
+            if state != "COMPLETED":
+                pytest.skip(
+                    f"FAKE evaluation for {agent_name!r} ended as {state!r}; "
+                    "comparison matrix needs COMPLETED + VALID scores."
+                )
+
+        _open_benchmark(driver, ctx["benchmark_name"])
+        _click_version(driver, ctx["version"])
+        open_tab(driver, "Compare", "Model comparisons")
+        compare = _panel(driver, "Model comparisons")
+
+        version_select = field(compare, "Benchmark version")
+        published = f"{ctx['version']} (PUBLISHED)"
+        options = [option.text for option in Select(version_select).options]
+        assert published in options, f"Published version missing from Compare: {options}"
+        _choose_select_text(driver, version_select, published)
+
+        for agent_name in (primary, secondary):
+            panel = _panel(driver, "Model comparisons")
+            checkbox = panel.find_element(
+                By.XPATH,
+                f".//label[contains(., '{agent_name}')]//input[@type='checkbox']",
+            )
+            if not checkbox.is_selected():
+                scroll(driver, checkbox)
+                checkbox.click()
+
+        click_button(driver, "Run comparison")
+
+        def matrix_ready(d) -> bool | str:
+            panel = _panel(d, "Model comparisons")
+            text = panel.text
+            if "Select agents and a published benchmark version to compare identical runs." in text:
+                return False
+            if "No comparison rows match these filters" in text:
+                return False
+            rows = panel.find_elements(By.CSS_SELECTOR, "table.metrics-table tbody tr")
+            if len(rows) < 2:
+                return False
+            body = "\n".join(row.text for row in rows)
+            if primary not in body or secondary not in body:
+                return False
+            if ctx["task_slug"] not in body:
+                return False
+            headers = [
+                cell.text.strip()
+                for cell in panel.find_elements(By.CSS_SELECTOR, "table.metrics-table thead th")
+            ]
+            if "Agent" not in headers or "Total" not in headers:
+                return False
+            # Metric columns beyond Agent / Task / Total prove a filled matrix.
+            if len(headers) <= 3:
+                return False
+            if "Profile " not in text:
+                return False
+            return True
+
+        wait(driver, 30).until(matrix_ready)
+        panel = _panel(driver, "Model comparisons")
+        rows = panel.find_elements(By.CSS_SELECTOR, "table.metrics-table tbody tr")
+        assert len(rows) >= 2, panel.text
+        body = "\n".join(row.text for row in rows)
+        assert primary in body and secondary in body, body
+        assert ctx["task_slug"] in body, body
+        headers = [
+            cell.text.strip()
+            for cell in panel.find_elements(By.CSS_SELECTOR, "table.metrics-table thead th")
+        ]
+        assert any(key not in {"Agent", "Task", "Total"} and key for key in headers), headers
+        assert_no_error(driver)
+        _secret_absent(driver, ctx)
+        ctx["compare_nonempty"] = True
