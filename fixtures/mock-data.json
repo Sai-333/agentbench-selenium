@@ -11,6 +11,12 @@
       "email": "selenium-viewer@example.com",
       "password": "password123",
       "displayName": "Selenium Viewer"
+    },
+    {
+      "role": "tenant",
+      "email": "selenium-tenant@example.com",
+      "password": "password123",
+      "displayName": "Selenium Tenant"
     }
   ],
   "organizations": [
@@ -130,6 +136,17 @@
           "reason": "Seeded Selenium flake quarantine for maven-junit.runner"
         }
       }
+    },
+    {
+      "name": "Selenium Other Org",
+      "slug": "selenium-other-org",
+      "ownerEmail": "selenium-tenant@example.com",
+      "projects": [
+        {
+          "name": "Selenium Other Project",
+          "description": "Visible only inside the other Selenium organization"
+        }
+      ]
     }
   ],
   "regressionRun": {

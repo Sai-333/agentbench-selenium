@@ -141,7 +141,8 @@ def seeded(require_stack, api_url: str) -> dict:
         f"task={ctx['task_slug']} agent={ctx['agent_name']} "
         f"board={ctx['public_slug']} up={ctx['up_count']} "
         f"viewer={ctx.get('viewer_email')} edge={ctx.get('edge_benchmark_name')} "
-        f"unpublished={ctx.get('unpublished_slug')} flake={ctx.get('flake_case_key')}"
+        f"unpublished={ctx.get('unpublished_slug')} flake={ctx.get('flake_case_key')} "
+        f"tenant={ctx.get('tenant_email')} tenant_org={ctx.get('tenant_org_slug')}"
     )
     return ctx
 

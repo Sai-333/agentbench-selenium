@@ -30,7 +30,7 @@ pip install -r requirements.txt
 pytest
 ```
 
-Every `pytest` run seeds [fixtures/mock-data.json](fixtures/mock-data.json) through the API before any case. The seed is idempotent: fixed emails and slugs are registered or reused, projects and benchmarks are created or updated, the published Java task is reused, and the public board's comments are reset to the fixture rows. A second run does not invent new users. The same seed registers `selenium-viewer@example.com` as a VIEWER, keeps a draft benchmark with a visible suite and a hidden suite, publishes then unpublishes `selenium-edge-unpublished`, upserts one flake quarantine for `maven-junit.runner`, and reuses one platform regression run (`selenium-mock` at git SHA `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`).
+Every `pytest` run seeds [fixtures/mock-data.json](fixtures/mock-data.json) through the API before any case. The seed is idempotent: fixed emails and slugs are registered or reused, projects and benchmarks are created or updated, the published Java task is reused, and the public board's comments are reset to the fixture rows. A second run does not invent new users. The same seed registers `selenium-viewer@example.com` as a VIEWER, keeps a draft benchmark with a visible suite and a hidden suite, publishes then unpublishes `selenium-edge-unpublished`, upserts one flake quarantine for `maven-junit.runner`, reuses one platform regression run (`selenium-mock` at git SHA `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`), and registers `selenium-tenant@example.com` as the only member of `selenium-other-org`.
 
 To seed without opening Chrome:
 
@@ -83,6 +83,14 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 17. Logging out while a project name is typed discards that name. Empty login is blocked by the form, a wrong password shows `Invalid credentials`, registering the seeded email shows `Email already registered`, and a short password shows the size error.
 18. The VIEWER sees `Your role: VIEWER`, no create/enqueue/hidden-suite/unpublish controls, hidden content as `present (restricted)` without the fixture text, a read-only public board, a working CSV export, and `Insufficient role for this operation` when creating a quarantine.
 
+`tests/test_regression_gaps.py` continues in the same session. Method names start at `test_23_` so they do not reuse `test_14_`:
+
+- `test_23_owner_saml_admin_authorized`: the owner opens **SSO** and sees **Add SAML IdP**. The result is not an authorization failure. When the SAML service provider is disabled, the IdP is not stored.
+- `test_24_saml_edit_disable_delete`: **Disable**, **Save IdP**, and **Delete** run only after an IdP row exists. Otherwise the case is skipped.
+- `test_25_saml_registration_id_rejected`: a registration id that is not lowercase kebab-case is rejected and is not listed.
+- `test_26_published_leaderboard_embed`: **Copy embed snippet** on the published org leaderboard shows an iframe for the seeded public slug. The embed page shows the fixture title and comment and not the hidden fixture text.
+- `test_27_other_org_is_hidden`: `selenium-other-org` is absent from the mock owner's org list. That tenant does not see the mock project. Each session receives `Not a member of this organization` when it reads the other org's projects.
+
 Failure screenshots and page HTML are written under `reports/` (gitignored).
 
 ## Out of scope
@@ -90,7 +98,7 @@ Failure screenshots and page HTML are written under `reports/` (gitignored).
 - Oracle Cloud Always Free, live AWS, S3/MinIO, and Object Lock / Compliance retention.
 - Firecracker, gVisor, and any claim that Docker isolation ran. The default worker image does not mount the Docker socket; the worker falls back to a local process. A `FAILED` evaluation whose UI still reaches a terminal state is a passed UI flow, not a skipped test. `COMPLETED` needs a Maven-capable runner (Docker socket on the worker, or Maven on that machine).
 - Python (pytest) and Node (Jest) benchmark paths, and the optional ruff/eslint images. Only the Java/JUnit task path is created.
-- OIDC, SAML login, paid model providers, agent-facing hidden-suite APIs, embed signing, and cost charts. The viewer task page's hidden-suite redaction is covered. SAML admin screens are only checked for the VIEWER message.
+- OIDC, live SAML login, paid model providers, agent-facing hidden-suite APIs, and cost charts. The viewer task page's hidden-suite redaction is covered. The owner SSO form is covered. **Disable**, **Save IdP**, and **Delete** run only when **Add SAML IdP** stores a row; default Compose leaves the SAML service provider disabled, so those buttons are skipped. There is no GPU screen and no GPU case.
 
 ## Adding a test for a new feature
 
