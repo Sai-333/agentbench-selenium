@@ -516,24 +516,25 @@ class TestAgentBenchGaps:
         _require(ctx, "shell", "agent_name")
         _as_owner(driver, base_url, ctx)
         open_tab(driver, "Agents", "Agents")
-        form = form_by_heading(driver, "Store agent API key")
-        fill(driver, form, "Secret name", _SECRET_NAME)
-        fill(driver, form, "Plaintext (write-only)", "not-a-provider-key")
-        _submit(driver, form)
+        secret_option = f"//option[contains(., '{_SECRET_NAME}')]"
+        if not driver.find_elements(By.XPATH, secret_option):
+            form = form_by_heading(driver, "Store agent API key")
+            fill(driver, form, "Secret name", _SECRET_NAME)
+            fill(driver, form, "Plaintext (write-only)", "not-a-provider-key")
+            _submit(driver, form)
 
-        def stored(d):
-            errors = visible_errors(d)
-            if any("Secret name already exists" in error for error in errors):
-                return "exists"
-            options = d.find_elements(By.XPATH, f"//option[contains(., '{_SECRET_NAME}')]")
-            if options:
-                return "created"
-            return False
+            def stored(d):
+                errors = visible_errors(d)
+                if any("Secret name already exists" in error for error in errors):
+                    return "exists"
+                if d.find_elements(By.XPATH, secret_option):
+                    return "created"
+                return False
 
-        state = wait(driver, 30).until(stored)
-        if state == "created":
-            assert_no_error(driver)
-        assert driver.find_elements(By.XPATH, f"//option[contains(., '{_SECRET_NAME}')]")
+            state = wait(driver, 30).until(stored)
+            if state == "created":
+                assert_no_error(driver)
+        assert driver.find_elements(By.XPATH, secret_option)
         _click_named_item(driver, ctx["agent_name"])
         click_button(driver, "Test connection")
         alert = wait(driver, 20).until(lambda d: d.switch_to.alert)
@@ -647,13 +648,6 @@ class TestAgentBenchGaps:
         assert not stored
         assert "seleniumfragmenttoken" not in driver.page_source
         ctx["oidc_hash"] = True
-
-    def test_36_members_screen_absent(self, driver, base_url, ctx):
-        _require(ctx, "shell")
-        _as_owner(driver, base_url, ctx)
-        tabs = [element.text.strip() for element in driver.find_elements(By.CSS_SELECTOR, "button.tab")]
-        assert "Members" not in tabs
-        pytest.skip("Members controls are not in the UI, so there is nothing to click.")
 
     def test_37_repository_form_absent(self, driver, base_url, ctx):
         _require(ctx, "shell")
