@@ -980,3 +980,32 @@ class TestAgentBenchGaps:
         assert_no_error(driver)
         _secret_absent(driver, ctx)
         ctx["repository"] = True
+
+    def test_44_costs_when_reported(self, driver, base_url, ctx):
+        """Costs with a token or cost row. Empty copy stays in test_30."""
+        _require(ctx, "shell", "agent_name")
+        _as_owner(driver, base_url, ctx)
+        open_tab(driver, "Costs", "Cost analytics")
+
+        def settled(d):
+            text = _panel(d, "Cost analytics").text
+            if "No token or cost records yet" in text:
+                return "empty"
+            if "By agent" in text and "Total tokens" in text:
+                return "rows"
+            return False
+
+        state = wait(driver, 30).until(settled)
+        if state == "empty":
+            pytest.skip(
+                "The seeded FAKE adapter reports no tokens or estimated cost, "
+                "so the costs screen cannot show a row."
+            )
+        panel = _panel(driver, "Cost analytics")
+        assert "No token or cost records yet" not in panel.text
+        assert ctx["agent_name"] in panel.text
+        assert panel.find_elements(By.XPATH, ".//h3[normalize-space()='By agent']")
+        assert panel.find_elements(By.XPATH, ".//h3[normalize-space()='By day']")
+        assert_no_error(driver)
+        _secret_absent(driver, ctx)
+        ctx["costs_reported"] = True
