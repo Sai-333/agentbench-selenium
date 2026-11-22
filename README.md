@@ -101,6 +101,7 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 - `test_36_members_screen_absent` and `test_37_repository_form_absent` are skipped because those controls are not in the UI.
 - `test_38_evaluation_bound_filters`: failure class, minimum and maximum weighted score, and created-time bounds on the evaluation list.
 - `test_39_failed_cases_only`: **Failed cases only** on an evaluation that has test runs. The case is skipped when that checkbox is not rendered.
+- `test_40_evaluation_stage_timeline`: evaluation detail shows Baseline, Model call, Patch, Tests, and Score. A queued run keeps every stage pending. The case is skipped when the timeline is not rendered.
 
 Failure screenshots and page HTML are written under `reports/` (gitignored).
 
