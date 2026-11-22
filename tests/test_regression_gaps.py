@@ -60,6 +60,31 @@ _FILTER_QUERY = "selenium-filter-nomatch"
 _SECRET_NAME = "Selenium Mock Secret"
 
 
+_QUALITY_FINDING = re.compile(r"\[(checkstyle|pmd|spotbugs)\]", re.IGNORECASE)
+
+
+def _quality_finding(driver) -> str:
+    """Tool id of a Checkstyle, PMD, or SpotBugs finding line, or empty."""
+    headings = driver.find_elements(By.XPATH, "//h3[normalize-space()='Code quality findings']")
+    if not headings:
+        return ""
+    block = headings[0].find_element(By.XPATH, "./ancestor::section[1]")
+    for item in block.find_elements(By.CSS_SELECTOR, ".quality-report li"):
+        match = _QUALITY_FINDING.search(item.text or "")
+        if match:
+            return match.group(1).lower()
+    for row in block.find_elements(By.CSS_SELECTOR, ".quality-report tbody tr"):
+        cells = row.find_elements(By.CSS_SELECTOR, "td")
+        if len(cells) < 4:
+            continue
+        tool = (cells[0].text or "").strip().lower()
+        notes = (cells[-1].text or "").strip().lower()
+        total = (cells[3].text or "").strip()
+        if tool in {"checkstyle", "pmd", "spotbugs"} and "did not run" not in notes and total not in {"", "0"}:
+            return tool
+    return ""
+
+
 def _secret_absent(driver, ctx) -> None:
     secret = str(ctx.get("hidden_fixture") or "").strip()
     if secret:
@@ -1046,3 +1071,25 @@ class TestAgentBenchGaps:
         assert_no_error(driver)
         _secret_absent(driver, ctx)
         ctx["costs_reported"] = True
+
+    def test_45_quality_findings(self, driver, base_url, ctx):
+        """Checkstyle, SpotBugs, or PMD findings on an evaluation detail."""
+        _require(ctx, "shell", "agent_name")
+        _as_owner(driver, base_url, ctx)
+        self._enqueue_fake_evaluation(driver, ctx)
+        try:
+            wait(driver, 20).until(
+                lambda d: d.find_elements(By.XPATH, "//h3[normalize-space()='Code quality findings']")
+            )
+        except Exception:
+            pytest.skip("Code quality findings never appear on the mock evaluation detail.")
+        found = _quality_finding(driver)
+        if not found:
+            pytest.skip(
+                "Checkstyle, SpotBugs, and PMD findings never appear in the mock "
+                "(those tools did not run on the FAKE evaluation)."
+            )
+        assert found in {"checkstyle", "pmd", "spotbugs"}
+        assert_no_error(driver)
+        _secret_absent(driver, ctx)
+        ctx["quality_findings"] = found

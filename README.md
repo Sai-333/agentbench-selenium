@@ -106,6 +106,7 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 - `test_42_members_list_and_admin_control`: the owner opens **Members**, sees the seeded viewer and developer, and sees an invite or role control. The case is skipped when that screen is not in the UI.
 - `test_43_project_repository_form`: on the seeded project, save a non-GitHub repository URL, validate it, and create a snapshot. The case is skipped when that form is not on the Projects tab.
 - `test_44_costs_when_reported`: the Costs tab shows the agent row and the visible uppercase token and by-agent labels when tokens or estimated cost were reported. If the screen is empty, the case enqueues a FAKE evaluation first. It is skipped only when that run still does not produce a row.
+- `test_45_quality_findings`: an evaluation detail shows a Checkstyle, SpotBugs, or PMD finding when the run recorded one. The case is skipped when those findings never appear in the mock.
 
 Failure screenshots and page HTML are written under `reports/` (gitignored).
 
