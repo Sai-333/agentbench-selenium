@@ -171,6 +171,35 @@ def _panel(driver, heading_prefix: str):
     )
 
 
+def _eval_rows(driver) -> list[str]:
+    panel = _panel(driver, "Evaluations")
+    rows: list[str] = []
+    for element in panel.find_elements(By.CSS_SELECTOR, "ul.list button.list-item"):
+        try:
+            if element.is_displayed():
+                rows.append(element.text)
+        except StaleElementReferenceException:
+            continue
+    return rows
+
+
+def _wait_search_param(driver, needle: str, started: float, min_delay: float) -> float:
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        if _saw_request(driver, needle):
+            elapsed = time.monotonic() - started
+            if elapsed < min_delay:
+                raise AssertionError(
+                    f"Evaluation search sent {needle} after {elapsed:.3f}s, before the 250 ms debounce"
+                )
+            return elapsed
+        errors = visible_errors(driver)
+        if errors:
+            raise AssertionError("Evaluation filter failed: " + " | ".join(errors))
+        time.sleep(0.05)
+    raise AssertionError(f"Evaluation search did not send {needle}")
+
+
 def _saw_request(driver, needle: str) -> bool:
     try:
         entries = driver.get_log("performance")
@@ -633,3 +662,130 @@ class TestAgentBenchGaps:
         assert not driver.find_elements(By.XPATH, "//h3[contains(., 'Repository')]")
         assert not driver.find_elements(By.XPATH, "//button[contains(., 'Snapshot')]")
         pytest.skip("Repository and snapshot forms are not in the UI, so there is nothing to click.")
+
+    def _ensure_evaluation_row(self, driver, ctx) -> None:
+        open_tab(driver, "Evaluations", "Evaluations")
+        wait(driver, 30).until(
+            lambda d: "Loading evaluations" not in _panel(d, "Evaluations").text
+        )
+        if _eval_rows(driver):
+            return
+        _open_benchmark(driver, ctx["benchmark_name"])
+        _click_version(driver, ctx["version"])
+        open_tab(driver, "Evaluations", "Evaluations")
+        form = form_by_heading(driver, "Enqueue evaluation")
+        version_id = field(form, "Published version ID").get_attribute("value") or ""
+        task_id = field(form, "Task ID").get_attribute("value") or ""
+        assert len(version_id) >= 32 and len(task_id) >= 32
+        agent = Select(field(form, "Agent"))
+        matching = [option.text for option in agent.options if ctx["agent_name"] in option.text]
+        assert matching, "FAKE agent was not offered on the evaluation form"
+        agent.select_by_visible_text(matching[0])
+        _submit(driver, form)
+        wait(driver, 30).until(lambda d: _eval_rows(d))
+
+    def _apply_eval_filter(self, driver, apply, needle: str, min_delay: float) -> None:
+        try:
+            driver.get_log("performance")
+        except Exception:
+            pass
+        started = time.monotonic()
+        apply()
+        _wait_search_param(driver, needle, started, min_delay)
+        wait(driver, 15).until(
+            lambda d: "No evaluations match these filters" in _panel(d, "Evaluations").text
+            and not _eval_rows(d)
+        )
+
+    def _clear_eval_filters(self, driver) -> None:
+        click_button(driver, "Clear")
+        wait(driver, 15).until(
+            lambda d: _eval_rows(d)
+            and "No evaluations match these filters" not in _panel(d, "Evaluations").text
+        )
+
+    def test_38_evaluation_bound_filters(self, driver, base_url, ctx):
+        """Failure class, score bounds, and created-time bounds from the evaluation list."""
+        _require(ctx, "shell")
+        _as_owner(driver, base_url, ctx)
+        self._ensure_evaluation_row(driver, ctx)
+        panel = lambda: _panel(driver, "Evaluations")  # noqa: E731
+
+        self._apply_eval_filter(
+            driver,
+            lambda: _choose_select_text(driver, field(panel(), "Failure class"), "AGENT"),
+            "failureClass=AGENT",
+            0,
+        )
+        self._clear_eval_filters(driver)
+
+        self._apply_eval_filter(
+            driver,
+            lambda: react_set(driver, field(panel(), "Min score"), "99"),
+            "minScore=99",
+            0.2,
+        )
+        self._clear_eval_filters(driver)
+
+        self._apply_eval_filter(
+            driver,
+            lambda: react_set(driver, field(panel(), "Max score"), "0"),
+            "maxScore=0",
+            0.2,
+        )
+        self._clear_eval_filters(driver)
+
+        self._apply_eval_filter(
+            driver,
+            lambda: react_set(driver, field(panel(), "Created from"), "2099-01-01T00:00"),
+            "createdFrom=2099",
+            0,
+        )
+        self._clear_eval_filters(driver)
+
+        self._apply_eval_filter(
+            driver,
+            lambda: react_set(driver, field(panel(), "Created to"), "2000-01-01T00:00"),
+            "createdTo=2000",
+            0,
+        )
+        self._clear_eval_filters(driver)
+        _choose_select_text(driver, field(panel(), "Failure class"), "No failure class")
+        wait(driver, 15).until(lambda d: _eval_rows(d))
+        assert "No evaluations match these filters" not in panel().text
+        click_button(driver, "Clear")
+        _secret_absent(driver, ctx)
+        ctx["eval_bounds"] = True
+
+    def test_39_failed_cases_only(self, driver, base_url, ctx):
+        _require(ctx, "shell")
+        _as_owner(driver, base_url, ctx)
+        open_tab(driver, "Evaluations", "Evaluations")
+        wait(driver, 30).until(lambda d: "Loading evaluations" not in _panel(d, "Evaluations").text)
+        rows = _panel(driver, "Evaluations").find_elements(By.CSS_SELECTOR, "ul.list button.list-item")
+        if not rows:
+            pytest.skip("Failed cases only is not rendered until an evaluation has test runs.")
+        rows[0].click()
+        wait(driver, 20).until(
+            lambda d: d.find_elements(By.XPATH, "//h2[normalize-space()='Evaluation detail']")
+        )
+        if not driver.find_elements(By.XPATH, "//label[contains(., 'Failed cases only')]"):
+            pytest.skip(
+                "Failed cases only is not rendered until an evaluation has test runs."
+            )
+        box = driver.find_element(By.XPATH, "//label[contains(., 'Failed cases only')]//input")
+        box.click()
+
+        def case_lines(d):
+            return [
+                item.text
+                for item in d.find_elements(By.CSS_SELECTOR, "ul.list.plain ul li")
+                if item.is_displayed() and item.text.strip()
+            ]
+
+        lines = wait(driver, 10).until(
+            lambda d: case_lines(d)
+            and all(": PASS" not in line and ": SKIP" not in line for line in case_lines(d))
+        )
+        assert lines
+        ctx["failed_cases_only"] = True
