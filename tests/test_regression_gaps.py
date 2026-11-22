@@ -1084,3 +1084,36 @@ class TestAgentBenchGaps:
         assert_no_error(driver)
         _secret_absent(driver, ctx)
         ctx["quality_did_not_run"] = True
+
+    def test_46_agent_context(self, driver, base_url, ctx):
+        """The agent-context route returns the seeded draft task allowlist."""
+        _require(ctx, "shell", "org_id", "draft_version_id", "draft_task_slug", "visible_framework")
+        _as_owner(driver, base_url, ctx)
+        listed = browser_json(
+            driver,
+            "GET",
+            f"/api/v1/orgs/{ctx['org_id']}/benchmark-versions/{ctx['draft_version_id']}/tasks",
+        )
+        assert listed["status"] == 200, listed
+        task = next(item for item in listed["body"] if item.get("slug") == ctx["draft_task_slug"])
+        context = browser_json(
+            driver,
+            "GET",
+            f"/api/v1/orgs/{ctx['org_id']}/tasks/{task['id']}/agent-context",
+        )
+        assert context["status"] == 200, context
+        body = context["body"]
+        assert body["taskId"] == task["id"]
+        assert body["slug"] == ctx["draft_task_slug"]
+        assert body["title"] == ctx["draft_task_title"]
+        assert body["prompt"] == task["prompt"]
+        assert body["visibleSuite"]["framework"] == ctx["visible_framework"]
+        assert body["visibleSuite"]["entryCommand"]
+        assert body["visibleSuite"]["caseCount"] == 1
+        assert "hiddenSuite" not in body
+        assert "referencePatch" not in body
+        assert "acceptanceCriteria" not in body
+        rendered = json.dumps(body)
+        assert ctx["hidden_fixture"].strip() not in rendered
+        assert_no_error(driver)
+        ctx["agent_context"] = True
