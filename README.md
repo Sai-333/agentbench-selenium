@@ -98,7 +98,7 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 - `test_33_public_vote_click`: the public **Down** and **Up** buttons use the seeded `seleniumclickvoter01` fingerprint and leave that vote up.
 - `test_34_developer_role`: `selenium-developer@example.com` can open create and enqueue forms, sees the hidden-suite editor, and cannot manage SAML or create a quarantine.
 - `test_35_oidc_hash_consumed`: a `/#access_token=...` fragment is consumed and does not leave a session.
-- `test_37_repository_form_absent` is skipped because repository and snapshot forms are not in the UI. The members screen is covered by `test_42_members_list_and_admin_control`.
+- `test_42_members_list_and_admin_control`: the owner opens **Members**, sees the seeded viewer and developer, and sees an invite or role control. The case is skipped when that screen is not in the UI.
 - `test_38_evaluation_bound_filters`: failure class, minimum and maximum weighted score, and created-time bounds on the evaluation list.
 - `test_39_failed_cases_only`: **Failed cases only** on an evaluation that has test runs. The case is skipped when that checkbox is not rendered.
 - `test_40_evaluation_stage_timeline`: evaluation detail shows Baseline, Model call, Patch, Tests, and Score. A queued run keeps every stage pending. The case is skipped when the timeline is not rendered.
