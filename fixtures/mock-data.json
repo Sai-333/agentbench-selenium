@@ -17,6 +17,12 @@
       "email": "selenium-tenant@example.com",
       "password": "password123",
       "displayName": "Selenium Tenant"
+    },
+    {
+      "role": "developer",
+      "email": "selenium-developer@example.com",
+      "password": "password123",
+      "displayName": "Selenium Developer"
     }
   ],
   "organizations": [
@@ -77,6 +83,10 @@
             {
               "value": 1,
               "voterFingerprint": "seleniummockvoter01"
+            },
+            {
+              "value": 1,
+              "voterFingerprint": "seleniumclickvoter01"
             }
           ]
         }
@@ -85,6 +95,10 @@
         {
           "email": "selenium-viewer@example.com",
           "role": "VIEWER"
+        },
+        {
+          "email": "selenium-developer@example.com",
+          "role": "DEVELOPER"
         }
       ],
       "edge": {

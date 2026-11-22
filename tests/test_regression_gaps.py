@@ -11,16 +11,21 @@ from __future__ import annotations
 import json
 import re
 import time
+from pathlib import Path
 
 import pytest
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import Select
 
 from tests.test_regression import _click_named_item, _require
 from tests.test_regression_edges import (
+    _assert_export,
+    _choose_select_text,
     _click_version,
     _detail,
     _login,
+    _logout,
     _open_benchmark,
     _submit,
 )
@@ -32,6 +37,7 @@ from tests.ui import (
     fill,
     form_by_heading,
     open_tab,
+    react_set,
     visible_errors,
     wait,
     wait_error,
@@ -48,6 +54,8 @@ _SAML_BLOCKS = (
     "Unable to load IdP metadata",
     "SAML IdP metadata is required",
 )
+_FILTER_QUERY = "selenium-filter-nomatch"
+_SECRET_NAME = "Selenium Mock Secret"
 
 
 def _secret_absent(driver, ctx) -> None:
@@ -154,6 +162,47 @@ def _open_sso(driver, registration_id: str) -> str:
     if "No SAML IdPs configured for this organization." in body:
         return "empty"
     raise AssertionError("SAML IdP list did not settle")
+
+
+def _panel(driver, heading_prefix: str):
+    return driver.find_element(
+        By.XPATH,
+        f"//h2[starts-with(normalize-space(), '{heading_prefix}')]/ancestor::*[contains(@class,'panel')][1]",
+    )
+
+
+def _saw_request(driver, needle: str) -> bool:
+    try:
+        entries = driver.get_log("performance")
+    except Exception:
+        return False
+    found = False
+    for entry in entries:
+        try:
+            message = json.loads(entry["message"])["message"]
+        except (KeyError, TypeError, json.JSONDecodeError):
+            continue
+        if message.get("method") != "Network.responseReceived":
+            continue
+        url = str(message.get("params", {}).get("response", {}).get("url", ""))
+        if needle in url:
+            found = True
+    return found
+
+
+def _click_vote(driver, marker: str) -> None:
+    def find(d):
+        for element in d.find_elements(By.TAG_NAME, "button"):
+            try:
+                if element.is_displayed() and element.is_enabled() and element.text.strip().startswith(marker):
+                    return element
+            except StaleElementReferenceException:
+                return False
+        return False
+
+    button = wait(driver, 20).until(find)
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
+    button.click()
 
 
 def _assert_not_member(driver, org_id: str) -> None:
@@ -336,3 +385,251 @@ class TestAgentBenchGaps:
         _assert_not_member(driver, ctx["org_id"])
         _secret_absent(driver, ctx)
         ctx["tenant_isolated"] = True
+
+    def test_28_export_pdf(self, driver, base_url, ctx, download_dir: Path):
+        _require(ctx, "shell", "org_id")
+        _as_owner(driver, base_url, ctx)
+        _open_benchmark(driver, ctx["benchmark_name"])
+        _click_version(driver, ctx["version"])
+        open_tab(driver, "Leaderboard", "Org leaderboard")
+        wait(driver, 30).until(
+            lambda d: (
+                "No completed scored evaluations" in d.find_element(By.TAG_NAME, "body").text
+                or "Profile " in d.find_element(By.TAG_NAME, "body").text
+            )
+        )
+        _assert_export(driver, download_dir, "Export PDF")
+
+        open_tab(driver, "Evaluations", "Evaluations")
+        if not driver.find_elements(By.XPATH, "//h2[normalize-space()='Evaluation detail']"):
+            form = form_by_heading(driver, "Enqueue evaluation")
+            version_id = field(form, "Published version ID").get_attribute("value") or ""
+            task_id = field(form, "Task ID").get_attribute("value") or ""
+            assert len(version_id) >= 32, f"Published version ID was not filled ({version_id!r})"
+            assert len(task_id) >= 32, f"Task ID was not filled ({task_id!r})"
+            agent = Select(field(form, "Agent"))
+            matching = [option.text for option in agent.options if ctx["agent_name"] in option.text]
+            assert matching, "FAKE agent was not offered on the evaluation form"
+            agent.select_by_visible_text(matching[0])
+            _submit(driver, form)
+            wait_outcome(driver, "Evaluation detail", timeout=60)
+        assert driver.find_elements(By.XPATH, "//button[normalize-space()='Export PDF']"), (
+            "Evaluation detail does not render Export PDF"
+        )
+        _assert_export(driver, download_dir, "Export PDF")
+        _secret_absent(driver, ctx)
+        ctx["pdf"] = True
+
+    def test_29_list_filters(self, driver, base_url, ctx):
+        _require(ctx, "shell", "regression_suite", "regression_passed_case")
+        _as_owner(driver, base_url, ctx)
+        open_tab(driver, "Evaluations", "Evaluations")
+        panel = _panel(driver, "Evaluations")
+        try:
+            driver.get_log("performance")
+        except Exception:
+            pass
+        started = time.monotonic()
+        react_set(driver, field(panel, "Search"), _FILTER_QUERY)
+        seen = None
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if _saw_request(driver, "q=" + _FILTER_QUERY):
+                seen = time.monotonic() - started
+                break
+            time.sleep(0.05)
+        assert seen is not None, "Evaluation search did not send the query"
+        assert seen >= 0.2, f"Evaluation search fired after {seen:.3f}s, before the 250 ms debounce"
+        wait_outcome(driver, "No evaluations match these filters")
+        _choose_select_text(driver, field(panel, "State"), "CANCELLED")
+        wait_outcome(driver, "No evaluations match these filters")
+        click_button(driver, "Clear")
+        wait(driver, 10).until(lambda d: field(_panel(d, "Evaluations"), "Search").get_attribute("value") == "")
+
+        _open_benchmark(driver, ctx["benchmark_name"])
+        _click_version(driver, ctx["version"])
+        open_tab(driver, "Leaderboard", "Org leaderboard")
+        fill(driver, _panel(driver, "Org leaderboard"), "Search", _FILTER_QUERY)
+        wait_outcome(driver, "No leaderboard rows match these filters")
+
+        open_tab(driver, "Compare", "Model comparisons")
+        fill(driver, _panel(driver, "Model comparisons"), "Search", _FILTER_QUERY)
+        wait_outcome(driver, "No comparison rows match these filters")
+        task_select = field(_panel(driver, "Model comparisons"), "Task")
+        slugs = [option.text for option in Select(task_select).options if option.text == ctx["task_slug"]]
+        assert slugs, "Comparison task filter did not list the seeded task"
+        _choose_select_text(driver, task_select, ctx["task_slug"])
+
+        open_tab(driver, "Regression runs", "Regression runs")
+        runs = _panel(driver, "Regression runs")
+        _choose_select_text(driver, field(runs, "Outcome"), "Failed")
+        wait_outcome(driver, ctx["regression_suite"])
+        _choose_select_text(driver, field(_panel(driver, "Regression runs"), "Outcome"), "Passed")
+        wait_outcome(driver, "No regression runs match these filters")
+        assert ctx["regression_suite"] not in _panel(driver, "Regression runs").text
+        _secret_absent(driver, ctx)
+        ctx["filters"] = True
+
+    def test_30_costs_empty(self, driver, base_url, ctx):
+        _require(ctx, "shell")
+        _as_owner(driver, base_url, ctx)
+        open_tab(driver, "Costs", "Cost analytics")
+        wait_outcome(driver, "No token or cost records yet")
+        fill(driver, _panel(driver, "Cost analytics"), "Search", _FILTER_QUERY)
+        wait_outcome(driver, "No cost rows match these filters")
+        click_button(driver, "Clear")
+        wait_outcome(driver, "No token or cost records yet")
+        assert_no_error(driver)
+        _secret_absent(driver, ctx)
+        ctx["costs"] = True
+
+    def test_31_secret_and_fake_connection(self, driver, base_url, ctx):
+        _require(ctx, "shell", "agent_name")
+        _as_owner(driver, base_url, ctx)
+        open_tab(driver, "Agents", "Agents")
+        form = form_by_heading(driver, "Store agent API key")
+        fill(driver, form, "Secret name", _SECRET_NAME)
+        fill(driver, form, "Plaintext (write-only)", "not-a-provider-key")
+        _submit(driver, form)
+
+        def stored(d):
+            errors = visible_errors(d)
+            if any("Secret name already exists" in error for error in errors):
+                return "exists"
+            options = d.find_elements(By.XPATH, f"//option[contains(., '{_SECRET_NAME}')]")
+            if options:
+                return "created"
+            return False
+
+        state = wait(driver, 30).until(stored)
+        if state == "created":
+            assert_no_error(driver)
+        assert driver.find_elements(By.XPATH, f"//option[contains(., '{_SECRET_NAME}')]")
+        _click_named_item(driver, ctx["agent_name"])
+        click_button(driver, "Test connection")
+        alert = wait(driver, 20).until(lambda d: d.switch_to.alert)
+        message = alert.text
+        alert.accept()
+        assert "FAKE" in message
+        assert "Fake provider ready" in message
+        _secret_absent(driver, ctx)
+        ctx["secret"] = True
+
+    def test_32_theme_toggle(self, driver, base_url, ctx):
+        _require(ctx, "shell", "public_slug")
+        _as_owner(driver, base_url, ctx)
+
+        def theme(d):
+            return d.execute_script(
+                "return [document.documentElement.getAttribute('data-theme'), "
+                "localStorage.getItem('agentbench.theme')];"
+            )
+
+        click_button(driver, "Dark")
+        wait(driver, 10).until(lambda d: theme(d) == ["dark", "dark"])
+        click_button(driver, "Light")
+        wait(driver, 10).until(lambda d: theme(d) == ["light", "light"])
+        driver.get(base_url + f"/public/leaderboards/{ctx['public_slug']}")
+        wait_outcome(driver, ctx["public_title"])
+        click_button(driver, "Dark")
+        wait(driver, 10).until(lambda d: theme(d) == ["dark", "dark"])
+        click_button(driver, "Light")
+        wait(driver, 10).until(lambda d: theme(d) == ["light", "light"])
+        _secret_absent(driver, ctx)
+        ctx["theme"] = True
+
+    def test_33_public_vote_click(self, driver, base_url, ctx):
+        _require(ctx, "shell", "public_slug", "vote_click_fingerprint", "up_count")
+        driver.get(base_url + "/")
+        wait(driver, 30).until(
+            lambda d: "Loading session" not in d.find_element(By.TAG_NAME, "body").text
+        )
+        _logout(driver)
+        driver.execute_script(
+            "localStorage.setItem('agentbench.publicVoterFingerprint', arguments[0]);",
+            ctx["vote_click_fingerprint"],
+        )
+        driver.get(base_url + f"/public/leaderboards/{ctx['public_slug']}")
+        wait_outcome(driver, f"▲ Up ({ctx['up_count']})")
+        try:
+            _click_vote(driver, "▼ Down")
+            wait_outcome(driver, f"▲ Up ({ctx['up_count'] - 1})")
+            wait_outcome(driver, "▼ Down (1)")
+        finally:
+            if "▼ Down (1)" in driver.find_element(By.TAG_NAME, "body").text:
+                _click_vote(driver, "▲ Up")
+                wait_outcome(driver, f"▲ Up ({ctx['up_count']})")
+                wait_outcome(driver, "▼ Down (0)")
+        _secret_absent(driver, ctx)
+        ctx["vote_click"] = True
+
+    def test_34_developer_role(self, driver, base_url, ctx):
+        _require(ctx, "shell", "developer_email", "org_id")
+        driver.get(base_url + "/")
+        wait(driver, 30).until(
+            lambda d: "Loading session" not in d.find_element(By.TAG_NAME, "body").text
+        )
+        _login(driver, ctx["developer_email"], ctx["developer_password"], ctx["developer_display_name"])
+        wait_outcome(driver, ctx["org_name"])
+        _click_named_item(driver, ctx["org_name"])
+        open_tab(driver, "Projects", "Projects")
+        wait_outcome(driver, "Your role: DEVELOPER")
+        assert driver.find_elements(By.XPATH, "//h3[normalize-space()='Create project']")
+        assert not driver.find_elements(By.XPATH, "//button[contains(., 'Delete project')]")
+        open_tab(driver, "Evaluations", "Evaluations")
+        assert driver.find_elements(By.XPATH, "//h3[normalize-space()='Enqueue evaluation']")
+        open_tab(driver, "Agents", "Agents")
+        assert driver.find_elements(By.XPATH, "//h3[normalize-space()='Register agent']")
+        open_tab(driver, "SSO", "Enterprise SSO")
+        wait_outcome(driver, "Only OWNER or ADMIN can manage SAML IdPs.")
+        assert not driver.find_elements(By.XPATH, "//h3[normalize-space()='Add SAML IdP']")
+        _open_benchmark(driver, ctx["benchmark_name"])
+        _click_version(driver, ctx["version"])
+        open_tab(driver, "Leaderboard", "Org leaderboard")
+        wait_outcome(driver, "read-only for your role")
+        assert not driver.find_elements(By.XPATH, "//button[normalize-space()='Unpublish']")
+        _open_benchmark(driver, ctx["edge_benchmark_name"])
+        _click_version(driver, ctx["draft_version"])
+        _click_named_item(driver, ctx["draft_task_title"])
+        wait_outcome(driver, "Hidden suite")
+        assert ctx["hidden_fixture"].strip() not in driver.page_source
+        denied = browser_json(
+            driver,
+            "POST",
+            f"/api/v1/orgs/{ctx['org_id']}/flake-quarantines",
+            {"caseKey": "selenium-developer-denied", "reason": "developer"},
+        )
+        assert denied["status"] == 403, denied
+        assert "Insufficient role for this operation" in _detail(denied)
+        _secret_absent(driver, ctx)
+        ctx["developer"] = True
+
+    def test_35_oidc_hash_consumed(self, driver, base_url, ctx):
+        _require(ctx, "shell")
+        # A hash-only change does not remount the app, so the parser would not run.
+        driver.get("about:blank")
+        driver.get(
+            base_url
+            + "/#access_token=seleniumfragmenttoken&refresh_token=seleniumfragmentrefresh&token_type=Bearer&expires_in=900"
+        )
+        wait(driver, 30).until(lambda d: d.execute_script("return window.location.hash") == "")
+        wait_outcome(driver, "Sign in to manage organizations")
+        stored = driver.execute_script("return localStorage.getItem('agentbench.accessToken')")
+        assert not stored
+        assert "seleniumfragmenttoken" not in driver.page_source
+        ctx["oidc_hash"] = True
+
+    def test_36_members_screen_absent(self, driver, base_url, ctx):
+        _require(ctx, "shell")
+        _as_owner(driver, base_url, ctx)
+        tabs = [element.text.strip() for element in driver.find_elements(By.CSS_SELECTOR, "button.tab")]
+        assert "Members" not in tabs
+        pytest.skip("Members controls are not in the UI, so there is nothing to click.")
+
+    def test_37_repository_form_absent(self, driver, base_url, ctx):
+        _require(ctx, "shell")
+        _as_owner(driver, base_url, ctx)
+        open_tab(driver, "Projects", "Projects")
+        assert not driver.find_elements(By.XPATH, "//h3[contains(., 'Repository')]")
+        assert not driver.find_elements(By.XPATH, "//button[contains(., 'Snapshot')]")
+        pytest.skip("Repository and snapshot forms are not in the UI, so there is nothing to click.")

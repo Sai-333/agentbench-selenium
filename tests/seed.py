@@ -769,9 +769,29 @@ def seed_mock_data(api_url: str, fixture: dict | None = None) -> dict:
     viewer = _user_by_role(data, "viewer") if any(user.get("role") == "viewer" for user in data["users"]) else None
     if viewer is None or not edge:
         raise RuntimeError("fixtures/mock-data.json needs a viewer user and an edge block on the owner org")
-    _ensure_account(base, viewer)
-    member = next(item for item in (org.get("members") or []) if item.get("email") == viewer["email"])
-    _ensure_member(base, token, org_id, viewer["email"], member["role"])
+    users_by_email = {item["email"]: item for item in data["users"]}
+    members = org.get("members") or []
+    if not any(item.get("email") == viewer["email"] and item.get("role") == "VIEWER" for item in members):
+        raise RuntimeError("fixtures/mock-data.json needs the viewer as a VIEWER member")
+    developer = None
+    for member in members:
+        account = users_by_email.get(member.get("email"))
+        if account is None:
+            raise RuntimeError(f"Member {member.get('email')} is not a fixture user")
+        _ensure_account(base, account)
+        _ensure_member(base, token, org_id, member["email"], member["role"])
+        if member.get("role") == "DEVELOPER":
+            developer = account
+    if developer is None:
+        raise RuntimeError("fixtures/mock-data.json needs a DEVELOPER member")
+    click_fingerprint = "seleniumclickvoter01"
+    if not any(
+        vote.get("voterFingerprint") == click_fingerprint and vote.get("value") == 1
+        for vote in board.get("votes") or []
+    ):
+        raise RuntimeError(
+            "The public board needs an up vote for seleniumclickvoter01 so a click can be restored"
+        )
     edge_ids = _ensure_edge_benchmark(base, token, org_id, project_id, edge)
     flake_id = _ensure_flake(base, token, org_id, edge["flake"])
     tenant = _seed_isolated_org(base, data, user["email"], token)
@@ -833,6 +853,10 @@ def seed_mock_data(api_url: str, fixture: dict | None = None) -> dict:
         "tenant_org_id": tenant["org_id"],
         "tenant_project_name": tenant["project_name"],
         "tenant_project_description": tenant["project_description"],
+        "developer_email": developer["email"],
+        "developer_password": developer["password"],
+        "developer_display_name": developer["displayName"],
+        "vote_click_fingerprint": click_fingerprint,
     }
 
 
@@ -867,6 +891,8 @@ def main() -> int:
                 "regressionRunId": ctx.get("regression_run_id") or None,
                 "tenant": ctx.get("tenant_email"),
                 "tenantOrg": ctx.get("tenant_org_slug"),
+                "developer": ctx.get("developer_email"),
+                "voteClickFingerprint": ctx.get("vote_click_fingerprint"),
             },
             indent=2,
         )
