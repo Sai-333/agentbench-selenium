@@ -909,3 +909,37 @@ class TestAgentBenchGaps:
         assert stored("agentbench.accessToken") == ""
         assert stored("agentbench.refreshToken") == ""
         ctx["session_refresh"] = True
+
+    def test_42_members_list_and_admin_control(self, driver, base_url, ctx):
+        """Owner sees the member list and an invite or role control."""
+        _require(ctx, "shell", "viewer_email", "developer_email")
+        _as_owner(driver, base_url, ctx)
+        tabs = [
+            element
+            for element in driver.find_elements(By.CSS_SELECTOR, "button.tab")
+            if element.is_displayed() and element.text.strip() == "Members"
+        ]
+        if tabs:
+            tabs[0].click()
+            wait(driver, 20).until(
+                lambda d: d.find_elements(By.XPATH, "//h2[contains(., 'Members')]|//h3[contains(., 'Members')]")
+            )
+        body = driver.find_element(By.TAG_NAME, "body").text
+        listed = ctx["viewer_email"] in body and ctx["developer_email"] in body
+        invite = driver.find_elements(
+            By.XPATH,
+            "//button[contains(., 'Invite') or contains(., 'Add member')]"
+            "|//h3[contains(., 'Invite') or contains(., 'Add member')]",
+        )
+        role = driver.find_elements(
+            By.XPATH,
+            "//label[contains(., 'Role')]//select|//select[contains(@name, 'role') or contains(@name, 'Role')]",
+        )
+        if not tabs and not listed and not invite and not role:
+            pytest.skip(
+                "Members list and invite or role controls are not in the UI, so there is nothing to click."
+            )
+        assert listed, "Signed-in admin did not see the seeded members"
+        assert invite or role, "Signed-in admin did not see an invite or role control"
+        _secret_absent(driver, ctx)
+        ctx["members"] = True
