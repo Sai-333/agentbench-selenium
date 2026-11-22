@@ -108,6 +108,7 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 - `test_44_costs_when_reported`: the Costs tab shows the agent row and FAKE sample usage totals (192 tokens / $0.0032 per call, scaled by how many FAKE calls finished earlier in the suite). If the screen is empty, the case enqueues a FAKE evaluation first. It is skipped only when that run still does not produce a row.
 - `test_45_quality_findings`: an evaluation detail shows Checkstyle, SpotBugs, and PMD as did not run. The case does not require a real finding.
 - `test_46_agent_context`: `GET .../tasks/{id}/agent-context` for the seeded draft task returns its prompt and visible suite, and omits the hidden suite. Hidden-fixture checks on the page stay in the earlier cases.
+- `test_47_weighted_score_bars`: evaluation detail shows weighted share-of-100 score bars (`Weighted score breakdown` meters). F2P/P2P/P2F/F2F stay labeled counts. The case is skipped when the bars are not rendered.
 
 Failure screenshots and page HTML are written under `reports/` (gitignored).
 

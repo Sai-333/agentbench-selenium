@@ -1122,3 +1122,44 @@ class TestAgentBenchGaps:
         assert ctx["hidden_fixture"].strip() not in rendered
         assert_no_error(driver)
         ctx["agent_context"] = True
+
+    def test_47_weighted_score_bars(self, driver, base_url, ctx):
+        """Weighted share-of-100 bars on evaluation detail; F2P family stay counts."""
+        _require(ctx, "shell", "agent_name")
+        _as_owner(driver, base_url, ctx)
+        self._enqueue_fake_evaluation(driver, ctx)
+        wait(driver, 20).until(
+            lambda d: d.find_elements(By.XPATH, "//h3[normalize-space()='Score']")
+        )
+        detail = driver.find_element(
+            By.XPATH, "//h2[normalize-space()='Evaluation detail']/ancestor::section[1]"
+        )
+        roots = detail.find_elements(
+            By.CSS_SELECTOR, ".score-bars[aria-label='Weighted score breakdown']"
+        )
+        if not roots:
+            pytest.skip("Weighted score bars are not rendered on evaluation detail.")
+        root = roots[0]
+        bars = root.find_elements(By.CSS_SELECTOR, ".score-bar")
+        assert bars, "Score section rendered without any weighted bars"
+        tracks = root.find_elements(By.CSS_SELECTOR, ".score-bar-track[role='meter']")
+        assert tracks, "Weighted bars did not expose meter tracks"
+        for track in tracks:
+            assert track.find_elements(By.CSS_SELECTOR, ".score-bar-fill")
+            assert track.get_attribute("aria-valuemin") == "0"
+            assert track.get_attribute("aria-valuemax")
+            assert track.get_attribute("aria-valuenow") is not None
+        labels = "\n".join(
+            element.text for element in root.find_elements(By.CSS_SELECTOR, ".score-bar-label")
+        )
+        assert "Weighted total" in labels or "% weight" in labels, labels
+        body = detail.text
+        assert "F2P" in body and "P2P" in body and "P2F" in body and "F2F" in body
+        assert not root.find_elements(
+            By.CSS_SELECTOR,
+            ".score-bar-track[aria-label='F2P'], .score-bar-track[aria-label='P2P'], "
+            ".score-bar-track[aria-label='P2F'], .score-bar-track[aria-label='F2F']",
+        )
+        assert_no_error(driver)
+        _secret_absent(driver, ctx)
+        ctx["score_bars"] = True
