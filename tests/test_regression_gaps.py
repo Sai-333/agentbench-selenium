@@ -649,14 +649,6 @@ class TestAgentBenchGaps:
         assert "seleniumfragmenttoken" not in driver.page_source
         ctx["oidc_hash"] = True
 
-    def test_37_repository_form_absent(self, driver, base_url, ctx):
-        _require(ctx, "shell")
-        _as_owner(driver, base_url, ctx)
-        open_tab(driver, "Projects", "Projects")
-        assert not driver.find_elements(By.XPATH, "//h3[contains(., 'Repository')]")
-        assert not driver.find_elements(By.XPATH, "//button[contains(., 'Snapshot')]")
-        pytest.skip("Repository and snapshot forms are not in the UI, so there is nothing to click.")
-
     def _ensure_evaluation_row(self, driver, ctx) -> None:
         open_tab(driver, "Evaluations", "Evaluations")
         wait(driver, 30).until(
