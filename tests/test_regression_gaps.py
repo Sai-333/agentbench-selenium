@@ -1163,3 +1163,62 @@ class TestAgentBenchGaps:
         assert_no_error(driver)
         _secret_absent(driver, ctx)
         ctx["score_bars"] = True
+
+    def test_48_public_leaderboard_filter(self, driver, base_url, ctx):
+        """Client-side Search / Agent / Task filters on the published public board."""
+        _require(ctx, "public_slug", "public_title", "agent_name", "task_slug")
+        driver.get(base_url + f"/public/leaderboards/{ctx['public_slug']}")
+        wait_outcome(driver, ctx["public_title"])
+
+        def board_panel(d):
+            for panel in d.find_elements(By.CSS_SELECTOR, "section.panel"):
+                if panel.find_elements(
+                    By.XPATH, ".//label[normalize-space(text()[1])='Search']"
+                ):
+                    return panel
+            return None
+
+        def row_texts(panel) -> str:
+            return "\n".join(
+                row.text
+                for row in panel.find_elements(By.CSS_SELECTOR, "table.metrics-table tbody tr")
+            )
+
+        panel = board_panel(driver)
+        if panel is None:
+            pytest.skip("Public leaderboard client-side filters are not rendered.")
+        assert row_texts(panel), "Public board filters rendered without any scored rows"
+
+        fill(driver, panel, "Search", _FILTER_QUERY)
+        wait_outcome(driver, "No leaderboard rows match these filters")
+        assert not row_texts(board_panel(driver))
+
+        click_button(driver, "Clear")
+        wait(driver, 10).until(
+            lambda d: field(board_panel(d), "Search").get_attribute("value") == ""
+            and bool(row_texts(board_panel(d)))
+        )
+
+        panel = board_panel(driver)
+        agent_options = [option.text for option in Select(field(panel, "Agent")).options]
+        assert ctx["agent_name"] in agent_options, "Seeded agent missing from public filter"
+        _choose_select_text(driver, field(panel, "Agent"), ctx["agent_name"])
+        wait(driver, 10).until(lambda d: ctx["agent_name"] in row_texts(board_panel(d)))
+
+        panel = board_panel(driver)
+        task_options = [option.text for option in Select(field(panel, "Task")).options]
+        assert ctx["task_slug"] in task_options, "Seeded task missing from public filter"
+        _choose_select_text(driver, field(panel, "Task"), ctx["task_slug"])
+        wait(driver, 10).until(lambda d: ctx["task_slug"] in row_texts(board_panel(d)))
+
+        fill(driver, board_panel(driver), "Search", _FILTER_QUERY)
+        wait_outcome(driver, "No leaderboard rows match these filters")
+        assert not row_texts(board_panel(driver))
+
+        click_button(driver, "Clear")
+        wait(driver, 10).until(
+            lambda d: field(board_panel(d), "Search").get_attribute("value") == ""
+            and bool(row_texts(board_panel(d)))
+        )
+        assert_no_error(driver)
+        ctx["public_filter"] = True
