@@ -1,9 +1,9 @@
 """Gaps that run after the ordered edge cases, still in one browser session.
 
 Covers the owner SAML admin form, one server-side rejection on that form, the
-published leaderboard embed control, and a second seeded organization. Edit,
-disable, and delete stay skipped when Add SAML IdP does not store a row.
-There is no GPU case.
+published leaderboard embed control, a second seeded organization, and cancel
+while still QUEUED. Edit, disable, and delete stay skipped when Add SAML IdP
+does not store a row. There is no GPU case.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from tests.ui import (
     assert_no_error,
     browser_json,
     click_button,
+    evaluation_state,
     field,
     fill,
     form_by_heading,
@@ -1404,3 +1405,135 @@ class TestAgentBenchGaps:
         assert_no_error(driver)
         _secret_absent(driver, ctx)
         ctx["compare_nonempty"] = True
+
+    def _enqueue_api_evaluation(self, driver, ctx) -> dict:
+        """Create one evaluation via the session API. Returns the response body."""
+        created = browser_json(
+            driver,
+            "POST",
+            f"/api/v1/orgs/{ctx['org_id']}/evaluations",
+            {
+                "benchmarkVersionId": ctx["version_id"],
+                "taskId": ctx["task_id"],
+                "agentId": ctx["agent_id"],
+            },
+        )
+        assert created["status"] in (200, 201), created
+        body = created.get("body") or {}
+        assert body.get("id"), created
+        return body
+
+    def _queued_evaluation_id(self, driver, ctx) -> str | None:
+        listed = browser_json(
+            driver,
+            "GET",
+            f"/api/v1/orgs/{ctx['org_id']}/evaluations?state=QUEUED&limit=50",
+        )
+        assert listed["status"] == 200, listed
+        rows = listed.get("body") or []
+        if not rows:
+            return None
+        return str(rows[0]["id"])
+
+    def _open_evaluation_by_id(self, driver, ctx, evaluation_id: str) -> None:
+        short = evaluation_id[:8]
+        _open_benchmark(driver, ctx["benchmark_name"])
+        _click_version(driver, ctx["version"])
+        open_tab(driver, "Evaluations", "Evaluations")
+        panel = _panel(driver, "Evaluations")
+        state_field = field(panel, "State")
+        _choose_select_text(driver, state_field, "QUEUED")
+
+        def find_row(d):
+            for button in d.find_elements(By.CSS_SELECTOR, "ul.list button.list-item"):
+                try:
+                    if button.is_displayed() and short in button.text:
+                        return button
+                except StaleElementReferenceException:
+                    return False
+            return False
+
+        row = wait(driver, 20).until(find_row)
+        scroll(driver, row)
+        row.click()
+        wait(driver, 20).until(
+            lambda d: d.find_elements(By.XPATH, "//h2[normalize-space()='Evaluation detail']")
+        )
+
+    def test_51_cancel_while_queued(self, driver, base_url, ctx):
+        """Cancel while still QUEUED (SEL-CANCEL-RACE). test_18 cancels any non-terminal."""
+        _require(ctx, "shell", "org_id", "version_id", "task_id", "agent_id", "benchmark_name", "version")
+        _as_owner(driver, base_url, ctx)
+
+        def cancel_button(d):
+            for button in d.find_elements(By.XPATH, "//button[normalize-space()='Cancel']"):
+                try:
+                    if button.is_displayed() and button.is_enabled():
+                        return button
+                except StaleElementReferenceException:
+                    return False
+            return False
+
+        # Default org concurrency is 2 active non-QUEUED. Flood the queue so at least
+        # one evaluation stays QUEUED long enough for the UI cancel path.
+        cancelled = False
+        last_state = ""
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline and not cancelled:
+            for _ in range(5):
+                self._enqueue_api_evaluation(driver, ctx)
+            candidate = self._queued_evaluation_id(driver, ctx)
+            if not candidate:
+                continue
+            detail = browser_json(
+                driver,
+                "GET",
+                f"/api/v1/orgs/{ctx['org_id']}/evaluations/{candidate}",
+            )
+            assert detail["status"] == 200, detail
+            body = detail.get("body") or {}
+            evaluation = body.get("evaluation") if isinstance(body.get("evaluation"), dict) else body
+            if (evaluation or {}).get("state") != "QUEUED":
+                continue
+
+            self._open_evaluation_by_id(driver, ctx, candidate)
+            try:
+                state = evaluation_state(driver)
+            except (StaleElementReferenceException, Exception):
+                continue
+            last_state = state
+            if state != "QUEUED":
+                continue
+
+            found = wait(driver, 10).until(cancel_button)
+            if evaluation_state(driver) != "QUEUED":
+                continue
+            scroll(driver, found)
+            found.click()
+
+            cancel_deadline = time.monotonic() + 30
+            state = ""
+            while time.monotonic() < cancel_deadline:
+                try:
+                    state = evaluation_state(driver)
+                except (StaleElementReferenceException, Exception):
+                    state = ""
+                if state == "CANCELLED":
+                    cancelled = True
+                    break
+                time.sleep(0.5)
+            last_state = state
+
+        assert cancelled, (
+            "Cancel while QUEUED did not reach CANCELLED. "
+            f"last_state={last_state!r} errors={visible_errors(driver)}"
+        )
+        assert not any(
+            button.is_displayed() and button.text.strip() == "Cancel"
+            for button in driver.find_elements(By.XPATH, "//button[normalize-space()='Cancel']")
+        )
+        # Immediate QUEUED→CANCELLED sets USER / CANCELLED_BY_USER on the detail.
+        body = driver.find_element(By.TAG_NAME, "body").text
+        assert "CANCELLED_BY_USER" in body or "Cancelled by user" in body, body[:800]
+        _secret_absent(driver, ctx)
+        ctx["cancel_queued"] = True
