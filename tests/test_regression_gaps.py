@@ -1063,8 +1063,13 @@ class TestAgentBenchGaps:
         assert "by agent" in visible
         assert "by day" in visible
         assert ctx["agent_name"] in panel.text
-        assert "192" in panel.text
-        assert "0.0032" in panel.text
+        # FAKE sample is 192 tokens / $0.0032 per call. Earlier suite cases may
+        # already have completed FAKE evaluations, so totals scale with N calls.
+        text = panel.text
+        matched = any(
+            str(192 * n) in text and f"{0.0032 * n:.4f}" in text for n in range(1, 64)
+        )
+        assert matched, text
         assert_no_error(driver)
         _secret_absent(driver, ctx)
         ctx["costs_reported"] = True

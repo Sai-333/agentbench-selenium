@@ -105,7 +105,7 @@ The suite drives `http://localhost:3000` only (the UI proxies `/api`). The seed 
 - `test_41_session_refresh`: moving the stored access-token expiry into the refresh window makes **Refresh health** call `POST /api/v1/auth/refresh` and rotate the tokens. A rejected refresh token returns to `Your session ended. Sign in again to continue.` The case is skipped when **Refresh health** is not rendered.
 - `test_42_members_list_and_admin_control`: the owner opens **Members**, sees the seeded viewer and developer, and sees an invite or role control. The case is skipped when that screen is not in the UI.
 - `test_43_project_repository_form`: on the seeded project, save a non-GitHub repository URL, validate it, and create a snapshot. The case is skipped when that form is not on the Projects tab.
-- `test_44_costs_when_reported`: the Costs tab shows the agent row and the visible uppercase token and by-agent labels when tokens or estimated cost were reported. If the screen is empty, the case enqueues a FAKE evaluation first. It is skipped only when that run still does not produce a row.
+- `test_44_costs_when_reported`: the Costs tab shows the agent row and FAKE sample usage totals (192 tokens / $0.0032 per call, scaled by how many FAKE calls finished earlier in the suite). If the screen is empty, the case enqueues a FAKE evaluation first. It is skipped only when that run still does not produce a row.
 - `test_45_quality_findings`: an evaluation detail shows Checkstyle, SpotBugs, and PMD as did not run. The case does not require a real finding.
 - `test_46_agent_context`: `GET .../tasks/{id}/agent-context` for the seeded draft task returns its prompt and visible suite, and omits the hidden suite. Hidden-fixture checks on the page stay in the earlier cases.
 
